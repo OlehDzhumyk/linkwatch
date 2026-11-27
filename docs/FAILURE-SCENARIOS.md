@@ -20,7 +20,7 @@ Two goals for every row:
 | A6 | DNS only broken | `dns` verdict (2+ failed queries) | tested (verdict) |
 | A7 | Router ignores or rate-limits ICMP | path counts as up when TCP/internet answer | tested |
 | A8 | Evening congestion (high RTT, low speed, no loss) | Degraded state; hourly profile; evening speed finding | tested (degraded), handled (report) |
-| A9 | Bufferbloat: latency rises only under load | RTT during speed test recorded, excluded from Degraded, reported; saturation by one host can induce RTT spikes/stalls on sibling observers and load-coincident micro-drops on the testing host, so episodes during `speedtest_active` must be distinguished from unprovoked idle line outages | partial (RTT under load tested; episode separation in `support_report` prerequisites) |
+| A9 | Bufferbloat: latency rises only under load | RTT during speed test recorded, excluded from Degraded, reported; saturation by one host can induce RTT spikes/stalls on sibling observers and load-coincident micro-drops on the testing host, so episodes during `speedtest_active` must be distinguished from unprovoked idle line outages | tested (`is_load_provoked`, `load_incidents`, `support_report`) |
 | A10 | Client roams to an extender/booster with the same SSID | `roam` event, context on episodes, roam count finding | tested (analyze) |
 | A11 | Router changes channel (auto channel, DFS radar on 5 GHz) | `channel_change` event (polling + nl80211 multicast) | tested (analyze) |
 | A12 | Co-channel interference from neighbours | scan shows same-channel networks; busy %; Wi-Fi retry rate delta | tested (retry rate in analyze) |
@@ -33,6 +33,8 @@ Two goals for every row:
 
 ## B. The observer (must not be mistaken for the network)
 
+> Extended host-isolation, hardware calibration, and self-check scenarios (`H1`–`H12`): see [HOST-ISOLATION-SCENARIOS.md](HOST-ISOLATION-SCENARIOS.md).
+
 | ID | Scenario | Expected behaviour | Status |
 |---|---|---|---|
 | B1 | Wi-Fi driver/firmware reset on the observer | `host` stream `driver_reset` alert (`ifindex` change), observer origin | tested (host) |
@@ -42,7 +44,7 @@ Two goals for every row:
 | B5 | Out of memory | `host` `low_memory` alert + systemd `MemoryMax`, restart, gap recorded | tested (host) |
 | B6 | Host suspends | `suspend_gap` event, episodes attributed to observer | tested (analyze) |
 | B7 | Power cut / hard reboot | next start records `gap_s` from heartbeat and `prev_boot_id` | handled; store recovery tested |
-| B8 | Observer's own speed test saturates the link | samples flagged `speedtest_active`, excluded from Degraded, context in episodes; speedtest-coincident timeouts must not inflate unprovoked idle line-outage counts | partial (`speedtest_active` flagged; episode separation in `support_report` prerequisites) |
+| B8 | Observer's own speed test saturates the link | samples flagged `speedtest_active`, excluded from Degraded, context in episodes; speedtest-coincident timeouts must not inflate unprovoked idle line-outage counts | tested (`is_load_provoked`, `load_incidents`, `support_report`) |
 | B9 | Wi-Fi scan by the observer pauses traffic (off-channel) | dedicated `wifi_scan` thread, `scan_active` flag, excluded from Degraded & attributed to observer | tested (analyze) |
 | B10 | Observer moved or cable unplugged by someone | `link_change`; wired no-link time reported separately; Wi-Fi disassociation is outage | tested (analyze) |
 | B11 | Both interfaces in one subnet: ARP flux mixes paths | sysctl set by package; `check` verifies; gateway MAC cross-iface check | handled (sysctl/check, security) |

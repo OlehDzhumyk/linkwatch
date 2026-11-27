@@ -124,3 +124,9 @@ Deterministic rules emit support requests **only** when backed by measured evide
 
 Current pain points (`:8080` collisions, DHCP IP drift, mobile token entry friction, firewall/AP-isolation blindness, Docker `bridge` pitfalls, and manual `scp` between probes) plus ten branching deployment scenarios (`D1`–`D10`) and a prioritized P0–P3 implementation backlog are documented in [DEPLOYMENT-SCENARIOS.md](DEPLOYMENT-SCENARIOS.md).
 
+---
+
+## 8. Host Isolation, Calibration & Self-Check
+
+Twelve branching host/observer artefact scenarios (`H1`–`H12`), active deep preflight verification (`check --deep`), co-located two-probe hardware calibration (`calibrate`), continuous zero-overhead sentinels, and a structured **Observer Trust Score** (`Clean | Caution | Polluted`) are scoped in [HOST-ISOLATION-SCENARIOS.md](HOST-ISOLATION-SCENARIOS.md).
+
