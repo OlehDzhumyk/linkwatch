@@ -238,9 +238,16 @@ pub(crate) async fn run_with(
     anyhow::ensure!(!ifaces.is_empty(), "no network interfaces to monitor (set [[interfaces]] in the config)");
     info!(?ifaces, "monitoring interfaces");
 
-    // Optional site model; a bad point id is a configuration error.
+    // Optional site model. A broken site file must never stop the measurements: the monitor
+    // logs the error and runs without the map (points are then free text).
     let site = match &cfg.site.file {
-        Some(p) => Some(Arc::new(site::Site::load(p).with_context(|| format!("site file {}", p.display()))?)),
+        Some(p) => match site::Site::load(p) {
+            Ok(s) => Some(Arc::new(s)),
+            Err(e) => {
+                error!("site file {} not used: {e:#}", p.display());
+                None
+            }
+        },
         None => None,
     };
     std::fs::create_dir_all(&cfg.data_dir).with_context(|| format!("cannot create {}", cfg.data_dir.display()))?;
