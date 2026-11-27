@@ -93,6 +93,21 @@ export async function postSession(body) {
 }
 export const postRouterProbe = (body) => postJSON("/api/router/probe", body, 25000, "adapter_used");
 export const postRouterCve = (body) => postJSON("/api/router/cve", body, 25000, "items");
+/** URL of `/api/support-report` for JSON, plain ticket text, Markdown or printable HTML. */
+export function supportReportUrl(ids, opts, format) {
+    const parts = [
+        "audience=" + enc(opts.audience),
+        "lang=" + enc(opts.lang),
+        "redact=" + enc(opts.redact),
+        "format=" + enc(format),
+    ];
+    if (ids.length > 0)
+        parts.push("sessions=" + ids.map(enc).join(","));
+    if (opts.toleranceS !== undefined)
+        parts.push("tolerance_s=" + enc(String(opts.toleranceS)));
+    return "/api/support-report?" + parts.join("&");
+}
+export const fetchSupportReport = (ids, opts) => getJSON(supportReportUrl(ids, opts, "json"), "short_text");
 /** An SSE `data` payload as an envelope, or null when it is not one. */
 export function parseEnvelope(data) {
     let v;

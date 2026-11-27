@@ -8,6 +8,7 @@ import type { Envelope } from "./api/Envelope.js";
 import type { EventsResponse } from "./api/EventsResponse.js";
 import type { MinutesResponse } from "./api/MinutesResponse.js";
 import type { PlanResponse } from "./api/PlanResponse.js";
+import type { RedactionLevel } from "./api/RedactionLevel.js";
 import type { ReportResponse } from "./api/ReportResponse.js";
 import type { RouterAudit } from "./api/RouterAudit.js";
 import type { ScanResponse } from "./api/ScanResponse.js";
@@ -16,6 +17,9 @@ import type { SessionsResponse } from "./api/SessionsResponse.js";
 import type { SiteResponse } from "./api/SiteResponse.js";
 import type { SpeedResponse } from "./api/SpeedResponse.js";
 import type { StatusResponse } from "./api/StatusResponse.js";
+import type { SupportAudience } from "./api/SupportAudience.js";
+import type { SupportLang } from "./api/SupportLang.js";
+import type { SupportPack } from "./api/SupportPack.js";
 import { LIVE } from "./state.js";
 
 const TIMEOUT_MS = 15000;
@@ -155,6 +159,33 @@ export const postRouterProbe = (body: RouterProbeBody): Promise<PostResult<Route
 
 export const postRouterCve = (body: CveLookupBody): Promise<PostResult<CveLookupResponse>> =>
   postJSON<CveLookupResponse>("/api/router/cve", body, 25000, "items");
+
+export interface SupportReportOpts {
+  audience: SupportAudience;
+  lang: SupportLang;
+  redact: RedactionLevel;
+  toleranceS?: number;
+}
+
+/** URL of `/api/support-report` for JSON, plain ticket text, Markdown or printable HTML. */
+export function supportReportUrl(
+  ids: readonly string[],
+  opts: SupportReportOpts,
+  format: "json" | "text" | "md" | "html",
+): string {
+  const parts = [
+    "audience=" + enc(opts.audience),
+    "lang=" + enc(opts.lang),
+    "redact=" + enc(opts.redact),
+    "format=" + enc(format),
+  ];
+  if (ids.length > 0) parts.push("sessions=" + ids.map(enc).join(","));
+  if (opts.toleranceS !== undefined) parts.push("tolerance_s=" + enc(String(opts.toleranceS)));
+  return "/api/support-report?" + parts.join("&");
+}
+
+export const fetchSupportReport = (ids: readonly string[], opts: SupportReportOpts): Promise<SupportPack | null> =>
+  getJSON<SupportPack>(supportReportUrl(ids, opts, "json"), "short_text");
 
 /** An SSE `data` payload as an envelope, or null when it is not one. */
 export function parseEnvelope(data: string): Envelope | null {

@@ -46,6 +46,7 @@ pub(super) fn routes() -> Router<AppState> {
         .route("/api/report", get(report))
         .route("/api/report/export", get(report_export))
         .route("/api/compare", get(compare_sessions))
+        .route("/api/support-report", get(support_report))
         .route("/api/sessions/:id/summary", get(session_summary))
         .route("/api/sessions/:id/events", get(session_events))
         .route("/api/live", get(live_sse))
@@ -1832,4 +1833,113 @@ async fn advice_get(State(st): State<AppState>) -> ApiResult {
     let audit = st.router_audit.lock().await.clone();
     let resp = st.live.read(|snap| crate::advice::evaluate(snap, audit.as_ref()));
     Ok(json_body(&resp))
+}
+
+#[derive(Deserialize)]
+struct SupportReportQuery {
+    sessions: Option<String>,
+    audience: Option<String>,
+    lang: Option<String>,
+    redact: Option<String>,
+    format: Option<String>,
+    tolerance_s: Option<f64>,
+}
+
+async fn support_report(
+    State(st): State<AppState>,
+    Extension(Authed(authed)): Extension<Authed>,
+    Query(q): Query<SupportReportQuery>,
+) -> ApiResult {
+    use crate::support_report::{
+        RedactionLevel, SupportAudience, SupportFormat, SupportInput, SupportLang, SupportOpts, build_pack, render_html,
+        render_markdown,
+    };
+
+    let audience = match q.audience.as_deref().unwrap_or("isp") {
+        "isp" => SupportAudience::Isp,
+        "landlord" => SupportAudience::Landlord,
+        "admin" => SupportAudience::Admin,
+        _ => return Err(ApiError(StatusCode::BAD_REQUEST, "audience must be isp, landlord, or admin".into())),
+    };
+    let lang = match q.lang.as_deref().unwrap_or("en") {
+        "en" => SupportLang::En,
+        "uk" => SupportLang::Uk,
+        _ => return Err(ApiError(StatusCode::BAD_REQUEST, "lang must be en or uk".into())),
+    };
+    let mut redaction = match q.redact.as_deref().unwrap_or("standard") {
+        "standard" => RedactionLevel::Standard,
+        "strict" => RedactionLevel::Strict,
+        "none" => RedactionLevel::None,
+        _ => return Err(ApiError(StatusCode::BAD_REQUEST, "redact must be standard, strict, or none".into())),
+    };
+    if !authed && redaction == RedactionLevel::None {
+        redaction = RedactionLevel::Standard;
+    }
+    let format = match q.format.as_deref().unwrap_or("json") {
+        "json" => SupportFormat::Json,
+        "text" => SupportFormat::Text,
+        "md" => SupportFormat::Md,
+        "html" => SupportFormat::Html,
+        _ => return Err(ApiError(StatusCode::BAD_REQUEST, "format must be json, text, md, or html".into())),
+    };
+    let tolerance_s = q.tolerance_s.unwrap_or(2.0);
+    if !tolerance_s.is_finite() || !(0.0..=60.0).contains(&tolerance_s) {
+        return Err(ApiError(StatusCode::BAD_REQUEST, "tolerance_s must be 0..=60".into()));
+    }
+
+    let mut dirs = Vec::new();
+    let mut seen = Vec::new();
+    if let Some(raw) = q.sessions.as_deref() {
+        for part in raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            if seen.iter().any(|s| s == part) {
+                return Err(ApiError(StatusCode::BAD_REQUEST, format!("duplicate session id {part}")));
+            }
+            dirs.push(session_dir(&st, part)?);
+            seen.push(part.to_string());
+        }
+        if dirs.len() > 8 {
+            return Err(ApiError(StatusCode::BAD_REQUEST, "sessions must list at most 8 session ids".into()));
+        }
+    }
+    let slug_src = if dirs.is_empty() {
+        let (id, opt_dir) = resolve_report_target(&st, None)?;
+        let Some(dir) = opt_dir else {
+            return Err(ApiError(StatusCode::NOT_FOUND, "session has no recorded data yet".into()));
+        };
+        dirs.push(dir);
+        id
+    } else if seen.len() == 1 {
+        seen[0].clone()
+    } else {
+        "multi".to_string()
+    };
+
+    let audit = st.router_audit.lock().await.clone();
+    let site = st.site.clone();
+    let pack = blocking(&st, move || {
+        let mut views = Vec::with_capacity(dirs.len());
+        for d in dirs {
+            views.push(crate::compare::SessionView::load(&d)?);
+        }
+        Ok::<_, anyhow::Error>(build_pack(
+            &SupportInput {
+                sessions: &views,
+                site: site.as_deref(),
+                router_audit: audit.as_ref(),
+                cve: None,
+                router_log: &[],
+            },
+            &SupportOpts { audience, lang, redaction, tolerance_s },
+        ))
+    })
+    .await?
+    .map_err(internal)?;
+
+    let slug = safe_slug(&slug_src, "session");
+    match format {
+        SupportFormat::Json => Ok(json_body(&pack)),
+        SupportFormat::Text => Ok(([(header::CONTENT_TYPE, HeaderValue::from_static("text/plain; charset=utf-8"))], pack.short_text).into_response()),
+        SupportFormat::Md => Ok(attachment_response("text/markdown; charset=utf-8", &format!("support-report-{slug}.md"), render_markdown(&pack).into_bytes())),
+        SupportFormat::Html => Ok(attachment_response("text/html; charset=utf-8", &format!("support-report-{slug}.html"), render_html(&pack).into_bytes())),
+    }
 }

@@ -25,6 +25,7 @@ mod security;
 mod site;
 mod speed;
 mod store;
+mod support_report;
 mod web;
 mod wifi;
 
@@ -92,6 +93,29 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// Build a tailored, redacted support or landlord report pack from one or more sessions.
+    SupportReport {
+        /// Session directories or ids under data_dir (default: newest session).
+        sessions: Vec<String>,
+        /// Target recipient: isp, landlord, or admin.
+        #[arg(long, value_enum, default_value_t = support_report::SupportAudience::Isp)]
+        audience: support_report::SupportAudience,
+        /// Output language: en or uk.
+        #[arg(long, value_enum, default_value_t = support_report::SupportLang::En)]
+        lang: support_report::SupportLang,
+        /// Redaction level: standard, strict, or none.
+        #[arg(long, value_enum, default_value_t = support_report::RedactionLevel::Standard)]
+        redact: support_report::RedactionLevel,
+        /// Output format: text (<= 2000 chars), md, html, or json.
+        #[arg(long, value_enum, default_value_t = support_report::SupportFormat::Text)]
+        format: support_report::SupportFormat,
+        /// Cable-modem DOCSIS event log to match with outages.
+        #[arg(long)]
+        router_log: Option<PathBuf>,
+        /// Maximum clock difference in seconds when comparing multiple sessions.
+        #[arg(long, default_value_t = 2.0)]
+        tolerance_s: f64,
+    },
 }
 
 fn main() -> ExitCode {
@@ -127,6 +151,9 @@ fn main() -> ExitCode {
             }
             Cmd::Analyze { session, router_log, json } => analyze_cmd(&cfg, session, router_log, json),
             Cmd::Compare { sessions, tolerance_s, json } => compare_cmd(&cfg, sessions, tolerance_s, json),
+            Cmd::SupportReport { sessions, audience, lang, redact, format, router_log, tolerance_s } => {
+                support_report_cmd(&cfg, sessions, audience, lang, redact, format, router_log, tolerance_s)
+            }
             Cmd::Sessions => {
                 for (dir, m) in store::read::sessions(&cfg.data_dir) {
                     let done = if dir.join("summary.json").exists() { "done" } else { "open" };
@@ -200,6 +227,59 @@ fn compare_cmd(cfg: &config::Config, sessions: Vec<String>, tolerance_s: f64, js
         println!("{}", serde_json::to_string_pretty(&rep)?);
     } else {
         print!("{}", compare::to_markdown(&rep));
+    }
+    Ok(true)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn support_report_cmd(
+    cfg: &config::Config,
+    sessions: Vec<String>,
+    audience: support_report::SupportAudience,
+    lang: support_report::SupportLang,
+    redact: support_report::RedactionLevel,
+    format: support_report::SupportFormat,
+    router_log: Option<PathBuf>,
+    tolerance_s: f64,
+) -> anyhow::Result<bool> {
+    anyhow::ensure!(sessions.len() <= 8, "at most 8 sessions supported");
+    let dirs: Vec<PathBuf> = if sessions.is_empty() {
+        let newest = store::read::sessions(&cfg.data_dir)
+            .into_iter()
+            .max_by_key(|(_, m)| m.started)
+            .map(|(d, _)| d)
+            .ok_or_else(|| anyhow::anyhow!("no sessions in {}", cfg.data_dir.display()))?;
+        vec![newest]
+    } else {
+        sessions
+            .into_iter()
+            .map(|s| if std::path::Path::new(&s).is_dir() { PathBuf::from(s) } else { cfg.data_dir.join(s) })
+            .collect()
+    };
+    let mut views = Vec::with_capacity(dirs.len());
+    for d in dirs {
+        views.push(compare::SessionView::load(&d)?);
+    }
+    let site = cfg.site.file.as_ref().and_then(|p| site::Site::load(p).ok());
+    let router_lines = match router_log {
+        Some(p) => analyze::parse_router_log(&std::fs::read_to_string(&p).map_err(|e| anyhow::anyhow!("{}: {e}", p.display()))?),
+        None => vec![],
+    };
+    let pack = support_report::build_pack(
+        &support_report::SupportInput {
+            sessions: &views,
+            site: site.as_ref(),
+            router_audit: None,
+            cve: None,
+            router_log: &router_lines,
+        },
+        &support_report::SupportOpts { audience, lang, redaction: redact, tolerance_s: tolerance_s.max(0.0) },
+    );
+    match format {
+        support_report::SupportFormat::Text => println!("{}", pack.short_text),
+        support_report::SupportFormat::Md => print!("{}", support_report::render_markdown(&pack)),
+        support_report::SupportFormat::Html => print!("{}", support_report::render_html(&pack)),
+        support_report::SupportFormat::Json => println!("{}", serde_json::to_string_pretty(&pack)?),
     }
     Ok(true)
 }

@@ -7,6 +7,7 @@ import { t, tMsg } from "./i18n.js";
 import { pointLabel } from "./points.js";
 import { LIVE, bus, state } from "./state.js";
 import { availTone } from "./status.js";
+import { openSupportDialog } from "./support.js";
 import { errorState } from "./ui.js";
 const MAX_COMPARE = 8;
 /** Controls list vs detail view on mobile/tablet (< 960 px). */
@@ -164,6 +165,10 @@ export function refreshCompare() {
 }
 export function initSessions() {
     byId("cmp-btn").addEventListener("click", () => void runCompare());
+    byId("cmp-support-btn").addEventListener("click", () => {
+        if (state.compareSel.length >= 2)
+            openSupportDialog(state.compareSel);
+    });
     byId("cmp-close").addEventListener("click", () => { byId("compare-panel").hidden = true; });
     byId("cmp-apply").addEventListener("click", () => void runCompare());
     byId("cmp-tol", HTMLInputElement).addEventListener("keydown", (ev) => {

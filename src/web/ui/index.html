@@ -145,6 +145,7 @@
           <div class="sec-head">
             <h2 id="h-compare-res" data-i18n="cmp.title">Comparison</h2>
             <div class="controls-row">
+              <button id="cmp-support-btn" class="ctrl" type="button" data-i18n="sup.open_btn">Support report</button>
               <a id="cmp-export" class="ctrl" href="#" download data-i18n="cmp.export">Export MD</a>
               <button id="cmp-close" class="ctrl" type="button" data-i18n="cmp.close">Close</button>
             </div>
@@ -166,12 +167,15 @@
               <h2 id="h-report" data-i18n="report.title">Session report</h2>
               <span id="rep-sub" class="small muted"></span>
             </div>
-            <div class="menu-wrap">
-              <button id="export-btn" class="ctrl" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="export-menu" data-i18n="report.export">Export</button>
-              <div id="export-menu" class="menu menu-sm" hidden>
-                <a id="report-export-md" class="menu-item" href="/api/report/export?format=md" download data-i18n="report.export_md">Report (Markdown)</a>
-                <a id="report-export-json" class="menu-item" href="/api/report/export?format=json" download data-i18n="report.export_json">Report (JSON)</a>
-                <p id="report-export-note" class="small muted menu-note" hidden data-i18n="report.export_wait">Available after 60 s of data.</p>
+            <div class="controls-row">
+              <button id="support-open-btn" class="ctrl" type="button" data-i18n="sup.open_btn">Support report</button>
+              <div class="menu-wrap">
+                <button id="export-btn" class="ctrl" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="export-menu" data-i18n="report.export">Export</button>
+                <div id="export-menu" class="menu menu-sm" hidden>
+                  <a id="report-export-md" class="menu-item" href="/api/report/export?format=md" download data-i18n="report.export_md">Report (Markdown)</a>
+                  <a id="report-export-json" class="menu-item" href="/api/report/export?format=json" download data-i18n="report.export_json">Report (JSON)</a>
+                  <p id="report-export-note" class="small muted menu-note" hidden data-i18n="report.export_wait">Available after 60 s of data.</p>
+                </div>
               </div>
             </div>
           </div>
@@ -453,6 +457,60 @@
         <button id="meas-yes" type="button" class="ctrl primary" hidden data-i18n="map.btn_yes">Yes, switch now</button>
       </div>
     </form>
+  </dialog>
+
+  <dialog id="support-dialog" class="dialog dialog-wide" aria-labelledby="sup-dlg-title">
+    <div class="sup-head">
+      <h2 id="sup-dlg-title" data-i18n="sup.title">Support &amp; Escalation Report</h2>
+      <span id="sup-readiness-pill" class="pill small"></span>
+    </div>
+    <div class="sup-controls">
+      <label class="fld"><span data-i18n="sup.lbl_aud">Audience</span>
+        <select id="sup-audience" class="ctrl">
+          <option value="isp" data-i18n="sup.aud_isp">ISP Support</option>
+          <option value="landlord" data-i18n="sup.aud_landlord">Landlord</option>
+          <option value="admin" data-i18n="sup.aud_admin">Network Admin</option>
+        </select>
+      </label>
+      <label class="fld"><span data-i18n="sup.lbl_lang">Language</span>
+        <select id="sup-lang" class="ctrl">
+          <option value="en" data-i18n="sup.lang_en">English</option>
+          <option value="uk" data-i18n="sup.lang_uk">Ukrainian</option>
+        </select>
+      </label>
+      <label class="fld"><span data-i18n="sup.lbl_red">Redaction</span>
+        <select id="sup-redact" class="ctrl">
+          <option value="standard" data-i18n="sup.red_standard">Standard (safe share)</option>
+          <option value="strict" data-i18n="sup.red_strict">Strict (public / anonymous)</option>
+          <option value="none" data-i18n="sup.red_none">None (internal only)</option>
+        </select>
+      </label>
+    </div>
+    <div id="sup-warnings" class="sup-warn-box" hidden></div>
+    <p id="sup-verdict" class="verdict-explain" hidden></p>
+    <div id="sup-msg" class="msg small" role="status" aria-live="polite" hidden></div>
+    <div class="sup-lists">
+      <div id="sup-ruled-box" hidden>
+        <h3 class="sub" data-i18n="sup.ruled_out">Already ruled out</h3>
+        <ul id="sup-ruled-list" class="sup-ul"></ul>
+      </div>
+      <div id="sup-asks-box" hidden>
+        <h3 class="sub" data-i18n="sup.asks">Requested actions</h3>
+        <ul id="sup-asks-list" class="sup-ul"></ul>
+      </div>
+    </div>
+    <div id="sup-notes-box" class="msg small info" hidden></div>
+    <div class="sup-text-head">
+      <label for="sup-text" class="sub" data-i18n="sup.ticket_lbl">Ticket summary (&lt;= 2000 chars)</label>
+      <span id="sup-char-count" class="mono small muted"></span>
+    </div>
+    <textarea id="sup-text" class="sup-text mono" readonly rows="10"></textarea>
+    <div class="dialog-actions">
+      <a id="sup-dl-md" class="ctrl" href="#" download data-i18n="sup.dl_md">Download Markdown</a>
+      <a id="sup-dl-html" class="ctrl" href="#" download data-i18n="sup.dl_html">Printable HTML</a>
+      <button id="sup-copy" type="button" class="ctrl primary" data-i18n="sup.copy">Copy text</button>
+      <button id="sup-close" type="button" class="ctrl" data-i18n="cmp.close">Close</button>
+    </div>
   </dialog>
 
 <script type="module" src="/js/main.js"></script>

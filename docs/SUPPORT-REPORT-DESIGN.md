@@ -1,6 +1,6 @@
 # Support & Escalation Report Pack (`src/support_report.rs`)
 
-> **Status:** design approved / not yet implemented.  
+> **Status:** implemented (`src/support_report/`, CLI `support-report`, `/api/support-report`, and Sessions Web UI dialog).  
 > **For agents (progressive disclosure):** load this document on demand **only** when planning, implementing, reviewing, or testing `src/support_report.rs`, `/api/support-report`, `linkwatch support-report`, or its prerequisites in `analyze` / `/api/report`. Do not preload it during unrelated tasks.
 
 ---

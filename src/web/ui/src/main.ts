@@ -13,6 +13,7 @@ import { initSessions, refreshCompare, renderSessionList, setSessionDetailOpen }
 import { focusPoint, initSiteControls, loadSessions, loadSite, refreshSelection, renderSite } from "./site.js";
 import { EVENT_FILTERS, LIVE, SCAN_FILTERS, TABS, THEMES, type Tab, type Theme, bus, oneOf, state } from "./state.js";
 import { renderAlertBar, renderSystem } from "./system.js";
+import { initSupportDialog } from "./support.js";
 import { focusTimestamp, loadLiveMinutes, loadMinutes, renderNowTimeline, renderTimelines, resetBrushZoom } from "./timeline.js";
 import { initTips, tip } from "./tips.js";
 import { initDisclosurePersistence } from "./ui.js";
@@ -360,6 +361,7 @@ async function main(): Promise<void> {
   initControls();
   initMeasure();
   initSiteControls();
+  initSupportDialog();
   bus.addEventListener("session-change", onSessionChange);
   await loadStatus();
   void loadControl().then(() => { renderHeader(); renderAudit(); renderNowMeasure(); });

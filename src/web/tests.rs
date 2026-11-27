@@ -554,6 +554,7 @@ fn ts_bindings_match_api_types() {
     crate::cve::CveLookupResponse::export_all(&cfg).unwrap();
     crate::advice::AdviceResponse::export_all(&cfg).unwrap();
     crate::compare::CompareReport::export_all(&cfg).unwrap();
+    crate::support_report::SupportPack::export_all(&cfg).unwrap();
     // The live feed (SSE) sends envelopes; `Record` is inlined there (flattened) but exported too.
     Envelope::export_all(&cfg).unwrap();
     Record::export_all(&cfg).unwrap();
@@ -968,4 +969,55 @@ async fn open_view_reads_without_token_but_changes_need_it() {
     // Open view still refuses foreign Host names (DNS rebinding).
     let r = raw(addr, "GET /api/status HTTP/1.1\r\nHost: evil.example.com\r\nConnection: close\r\n\r\n").await;
     assert_eq!(status_and_body(&r).0, 403);
+}
+
+#[tokio::test]
+async fn support_report_endpoint_formats_and_redaction() {
+    let d = tempfile::tempdir().unwrap();
+    let now = chrono::Utc::now();
+    let h = chrono::TimeDelta::hours;
+    write_session(d.path(), &meta_at("s1", Some("Room 1"), now - h(8)), now - h(6), None);
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let opts = WebRouterOpts { open_view: true, ..Default::default() };
+    tokio::spawn(serve_on_with_opts(
+        listener,
+        Live::new(),
+        d.path().to_path_buf(),
+        None,
+        Some(TOK.to_string()),
+        None,
+        opts,
+        std::future::pending(),
+    ));
+
+    // Reject unknown/unsupported languages (including ru).
+    assert_eq!(get(addr, "/api/support-report?sessions=s1&lang=ru").await.0, 400);
+
+    // JSON pack + unauthenticated open_view clamps redact=none down to standard.
+    let (c, jbody) = get(addr, "/api/support-report?sessions=s1&audience=landlord&lang=uk&redact=none&format=json").await;
+    assert_eq!(c, 200, "{jbody}");
+    let v = json(&jbody);
+    assert_eq!(v["redaction"], "standard");
+    assert_eq!(v["lang"], "uk");
+
+    // With token, redact=none is honoured.
+    let (c, jbody_auth) = get_auth(addr, "/api/support-report?sessions=s1&redact=none&format=json").await;
+    assert_eq!(c, 200, "{jbody_auth}");
+    assert_eq!(json(&jbody_auth)["redaction"], "none");
+
+    // Plain text capped <= 2000 chars.
+    let (c, txt) = get(addr, "/api/support-report?sessions=s1&format=text").await;
+    assert_eq!(c, 200, "{txt}");
+    assert!(txt.chars().count() <= 2000);
+
+    // Markdown & printable HTML return attachments without scripts.
+    let raw_md = raw(addr, &format!("GET /api/support-report?sessions=s1&format=md HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n")).await;
+    assert!(raw_md.starts_with("HTTP/1.1 200"), "{raw_md}");
+    assert!(raw_md.contains("filename=\"support-report-s1.md\""), "{raw_md}");
+
+    let raw_html = raw(addr, &format!("GET /api/support-report?sessions=s1&format=html HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n")).await;
+    assert!(raw_html.starts_with("HTTP/1.1 200"), "{raw_html}");
+    assert!(raw_html.contains("filename=\"support-report-s1.html\""), "{raw_html}");
+    assert!(!raw_html.contains("<script"), "{raw_html}");
 }
