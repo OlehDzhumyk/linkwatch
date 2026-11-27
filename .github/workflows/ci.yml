@@ -72,7 +72,7 @@ jobs:
         run: npm run build
       - name: CSP policy audit
         run: |
-          ! grep -rnE "innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|style=|\.style\." src/web/ui/src src/web/ui/index.html
+          ! grep -rnE "innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function|style=|\.style\." src/web/ui/src src/web/ui/index.html
       - name: Compiled UI and bindings are committed
         run: |
           git diff --exit-code -- src/web/ui/dist src/web/ui/src/api

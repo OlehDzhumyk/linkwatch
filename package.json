@@ -7,7 +7,7 @@
   "scripts": {
     "build": "npm run clean && tsc -p src/web/ui && node -e \"require('fs').rmSync('src/web/ui/dist/api',{recursive:true,force:true})\"",
     "clean": "node -e \"require('fs').rmSync('src/web/ui/dist',{recursive:true,force:true})\"",
-    "check": "tsc -p src/web/ui --noEmit"
+    "check": "tsc -p src/web/ui --noEmit && node scripts/check-ui.mjs"
   },
   "devDependencies": {
     "typescript": "7.0.2"

@@ -20,7 +20,7 @@ Two goals for every row:
 | A6 | DNS only broken | `dns` verdict (2+ failed queries) | tested (verdict) |
 | A7 | Router ignores or rate-limits ICMP | path counts as up when TCP/internet answer | tested |
 | A8 | Evening congestion (high RTT, low speed, no loss) | Degraded state; hourly profile; evening speed finding | tested (degraded), handled (report) |
-| A9 | Bufferbloat: latency rises only under load | RTT during speed test recorded, excluded from Degraded, reported | tested (analyze) |
+| A9 | Bufferbloat: latency rises only under load | RTT during speed test recorded, excluded from Degraded, reported; saturation by one host can induce RTT spikes/stalls on sibling observers and load-coincident micro-drops on the testing host, so episodes during `speedtest_active` must be distinguished from unprovoked idle line outages | partial (RTT under load tested; episode separation in `support_report` prerequisites) |
 | A10 | Client roams to an extender/booster with the same SSID | `roam` event, context on episodes, roam count finding | tested (analyze) |
 | A11 | Router changes channel (auto channel, DFS radar on 5 GHz) | `channel_change` event (polling + nl80211 multicast) | tested (analyze) |
 | A12 | Co-channel interference from neighbours | scan shows same-channel networks; busy %; Wi-Fi retry rate delta | tested (retry rate in analyze) |
@@ -42,7 +42,7 @@ Two goals for every row:
 | B5 | Out of memory | `host` `low_memory` alert + systemd `MemoryMax`, restart, gap recorded | tested (host) |
 | B6 | Host suspends | `suspend_gap` event, episodes attributed to observer | tested (analyze) |
 | B7 | Power cut / hard reboot | next start records `gap_s` from heartbeat and `prev_boot_id` | handled; store recovery tested |
-| B8 | Observer's own speed test saturates the link | samples flagged `speedtest_active`, excluded from Degraded, context in episodes | tested (classify) |
+| B8 | Observer's own speed test saturates the link | samples flagged `speedtest_active`, excluded from Degraded, context in episodes; speedtest-coincident timeouts must not inflate unprovoked idle line-outage counts | partial (`speedtest_active` flagged; episode separation in `support_report` prerequisites) |
 | B9 | Wi-Fi scan by the observer pauses traffic (off-channel) | dedicated `wifi_scan` thread, `scan_active` flag, excluded from Degraded & attributed to observer | tested (analyze) |
 | B10 | Observer moved or cable unplugged by someone | `link_change`; wired no-link time reported separately; Wi-Fi disassociation is outage | tested (analyze) |
 | B11 | Both interfaces in one subnet: ARP flux mixes paths | sysctl set by package; `check` verifies; gateway MAC cross-iface check | handled (sysctl/check, security) |
@@ -93,6 +93,9 @@ Two goals for every row:
 | F2 | Hostile SSID text (`<script>` etc.) | rendered as text only (`textContent`, never `innerHTML`) | handled (textContent rule) |
 | F3 | Path traversal via session id | ids validated against `[A-Za-z0-9_.-]` and existing `meta.json` | tested (web) |
 | F4 | Many SSE clients / slow clients | bounded, slow clients dropped | handled |
+| F5 | SSE live stream disconnects or stalls | Header connection dot switches to reconnecting with exponential backoff; stale-data badge shown after 2× refresh interval (60 s) without fresh data | handled |
+| F6 | Report / compare / history API fails (500 / 401 / 429) | Inline error banner with retry button or clear auth/rate-limit message; UI never stays stuck on loading | handled |
+| F7 | Narrow phone screen (390 px) & live EN ↔ UK language switching | Zero horizontal overflow (`scrollWidth === innerWidth`), dynamic panels & open selections re-render in place without losing state | handled |
 
 ## How to test what is not tested yet
 
