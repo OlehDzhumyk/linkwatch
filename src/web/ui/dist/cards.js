@@ -6,7 +6,7 @@ import { pointLabel } from "./points.js";
 import { state } from "./state.js";
 import { busyTone, sigTone } from "./status.js";
 import { tip } from "./tips.js";
-import { kv } from "./ui.js";
+import { emptyState, kv } from "./ui.js";
 import { renderTopology } from "./wifi.js";
 /** Seconds kept in the per-interface sparkline. */
 const RING_SECS = 60;
@@ -19,6 +19,14 @@ export function renderHeader() {
     v.textContent = label;
     v.className = "pill " + cls;
     v.title = s.verdict_since ? t("hero.since", { t: fmtTimeShort(s.verdict_since) }) : "";
+    const nowDot = byId("tab-now-dot");
+    if (cls === "warn" || cls === "bad") {
+        nowDot.hidden = false;
+        nowDot.className = "tab-dot" + (cls === "bad" ? " bad" : "");
+    }
+    else {
+        nowDot.hidden = true;
+    }
     const m = s.session;
     const parts = [];
     parts.push(m?.point ? pointLabel(m.point) : t("ctx.no_point"));
@@ -212,7 +220,7 @@ export function renderCards() {
     renderTopology();
     const names = Object.keys(s.ifaces);
     if (!names.length) {
-        box.replaceChildren(el("div", { class: "empty-state" }, el("strong", { text: t("now.no_ifaces") }), el("span", { text: t("now.no_ifaces_hint") })));
+        box.replaceChildren(emptyState(t("now.no_ifaces"), t("now.no_ifaces_hint")));
         return;
     }
     const sparks = [];

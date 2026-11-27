@@ -61,6 +61,7 @@ export function tip(key: TipKey): HTMLElement {
 
 function positionTip(wrap: HTMLElement): void {
   wrap.classList.remove("tip-align-right", "tip-below");
+  if (window.innerWidth < 600) return;
   const box = wrap.querySelector(".tip-box");
   if (!(box instanceof HTMLElement)) return;
   const r = box.getBoundingClientRect();

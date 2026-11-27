@@ -62,12 +62,12 @@ export function fetchReport(session: string): Promise<ReportResponse | null> {
 }
 
 /** URL of `/api/compare` for 2..=8 session ids (`format` json or md). */
-export function compareUrl(ids: readonly string[], format: "json" | "md"): string {
-  return "/api/compare?sessions=" + ids.map(enc).join(",") + "&format=" + format;
+export function compareUrl(ids: readonly string[], format: "json" | "md", toleranceS = 2): string {
+  return "/api/compare?sessions=" + ids.map(enc).join(",") + "&format=" + format + "&tolerance_s=" + enc(String(toleranceS));
 }
 
-export const fetchCompare = (ids: readonly string[]): Promise<CompareReport | null> =>
-  getJSON<CompareReport>(compareUrl(ids, "json"), "sessions");
+export const fetchCompare = (ids: readonly string[], toleranceS = 2): Promise<CompareReport | null> =>
+  getJSON<CompareReport>(compareUrl(ids, "json", toleranceS), "sessions");
 
 export function fetchEvents(session: string): Promise<EventsResponse | SessionEventsResponse | null> {
   return session === LIVE

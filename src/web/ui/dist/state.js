@@ -19,6 +19,7 @@ export const ADJ_FLOORS = ["off", "below", "above"];
  * "focus-time": CustomEvent<string> highlights an incident timestamp on the timeline.
  * "focus-point": CustomEvent<string> jumps to a point on the floor plan.
  * "session-selected": user switched between Live and a historical session.
+ * "brush-change": timeline brush zoom range changed (filter incidents list).
  */
 export const bus = new EventTarget();
 export const state = {
@@ -27,8 +28,10 @@ export const state = {
     hours: 24,
     rangeUserSet: false,
     minutes: {},
+    liveMinutes: {},
     lanSeries: [],
     liveRing: new Map(),
+    lastUpdateMs: 0,
     events: [],
     evFilter: "important",
     showAll: false,
@@ -37,6 +40,7 @@ export const state = {
     scanFilter: "all",
     site: null,
     sessions: [],
+    sessionsLoaded: false,
     building: null,
     unit: null,
     selected: null,
@@ -51,8 +55,11 @@ export const state = {
     report: null,
     liveReport: null,
     compareSel: [],
+    compareTol: 2,
     compare: null,
     highlightTs: null,
+    brushRange: null,
+    tlInspected: false,
     audit: null,
     advice: null,
     cve: null,

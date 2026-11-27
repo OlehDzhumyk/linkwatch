@@ -40,10 +40,10 @@ export function fetchReport(session) {
     return getJSON(url, "ifaces");
 }
 /** URL of `/api/compare` for 2..=8 session ids (`format` json or md). */
-export function compareUrl(ids, format) {
-    return "/api/compare?sessions=" + ids.map(enc).join(",") + "&format=" + format;
+export function compareUrl(ids, format, toleranceS = 2) {
+    return "/api/compare?sessions=" + ids.map(enc).join(",") + "&format=" + format + "&tolerance_s=" + enc(String(toleranceS));
 }
-export const fetchCompare = (ids) => getJSON(compareUrl(ids, "json"), "sessions");
+export const fetchCompare = (ids, toleranceS = 2) => getJSON(compareUrl(ids, "json", toleranceS), "sessions");
 export function fetchEvents(session) {
     return session === LIVE
         ? getJSON("/api/events?limit=500", "events")

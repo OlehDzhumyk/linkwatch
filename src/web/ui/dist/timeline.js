@@ -1,14 +1,24 @@
-// Per-interface timeline charts (minute buckets) and LAN active device count chart.
+// Per-interface timeline charts (Sessions full range + Now compact 1 h view) and LAN device chart.
+// Supports hover/crosshair + canvas value bubble, keyboard ←/→ (Shift = 10 min), brush-drag zoom,
+// and a calm highlight ring pulse when jumping from an incident.
 import { fetchMinutes } from "./client.js";
 import { byId, cssVar, el, prepareCanvas } from "./dom.js";
-import { fmtTime, ms, stateLabel } from "./format.js";
-import { t } from "./i18n.js";
-import { LIVE, state } from "./state.js";
+import { fmtTime, fmtTimeShort, ms, stateLabel } from "./format.js";
+import { getLang, t } from "./i18n.js";
+import { LIVE, bus, state } from "./state.js";
+import { errorState } from "./ui.js";
 const views = new WeakMap();
 const lanViews = new WeakMap();
+let sessionCanvases = [];
+let nowCanvases = [];
+let dragBand = null;
+let pulseProgress = null;
+let pulseRaf = null;
 const tOf = (b) => new Date(b.t).getTime();
 const pOf = (p) => new Date(p.t).getTime();
-function timeWindow(bucketsByIface, lan, hours) {
+function sessionTimeWindow(bucketsByIface, lan, hours) {
+    if (state.brushRange)
+        return state.brushRange;
     let end = Date.now();
     if (state.selectedSession !== LIVE) {
         let maxT = -Infinity;
@@ -23,26 +33,30 @@ function timeWindow(bucketsByIface, lan, hours) {
     }
     return [end - hours * 3600e3, end];
 }
+function nowTimeWindow() {
+    const end = Date.now();
+    return [end - 3600e3, end];
+}
 function drawTimeGrid(c, W, H, L, pw, start, end, hours, gridTop) {
-    const x = (t) => L + ((t - start) / (end - start)) * pw;
+    const x = (tm) => L + ((tm - start) / (end - start)) * pw;
     c.font = "10px " + cssVar("--mono");
     c.fillStyle = cssVar("--muted");
     c.strokeStyle = cssVar("--grid");
     c.lineWidth = 1;
-    // grid ticks: support 15m/1h/3h/6h/24h/72h cleanly
-    const pxPerMin = pw / (hours * 60);
-    const stepMin = [3, 5, 10, 15, 30, 60, 120, 180, 360, 720, 1440].find((m) => m * pxPerMin >= 48) ?? 1440;
+    const pxPerMin = pw / Math.max(1, hours * 60);
+    const stepMin = [1, 2, 3, 5, 10, 15, 30, 60, 120, 180, 360, 720, 1440].find((m) => m * pxPerMin >= 48) ?? 1440;
     const stepMs = stepMin * 60e3;
     const firstT = Math.ceil(start / stepMs) * stepMs;
-    for (let t = firstT; t <= end; t += stepMs) {
-        const d = new Date(t);
-        const px = Math.round(x(t)) + 0.5;
+    const lang = getLang();
+    for (let tm = firstT; tm <= end; tm += stepMs) {
+        const d = new Date(tm);
+        const px = Math.round(x(tm)) + 0.5;
         c.beginPath();
         c.moveTo(px, gridTop);
         c.lineTo(px, H - 14);
         c.stroke();
         const lbl = d.getHours() === 0 && d.getMinutes() === 0
-            ? d.toLocaleDateString([], { day: "numeric", month: "short" })
+            ? d.toLocaleDateString(lang, { day: "numeric", month: "short" })
             : String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
         if (px + 2 + c.measureText(lbl).width <= W)
             c.fillText(lbl, px + 2, H - 3);
@@ -61,7 +75,29 @@ function drawCrosshair(c, hx, L, W, R, top, bottom) {
     c.stroke();
     c.restore();
 }
-function drawHighlight(c, x, start, end, L, W, R, top, bottom) {
+function drawBrushBand(c, x, L, W, R, top, bottom) {
+    if (!dragBand)
+        return;
+    const x0 = Math.max(L, Math.min(W - R, x(dragBand[0])));
+    const x1 = Math.max(L, Math.min(W - R, x(dragBand[1])));
+    const left = Math.min(x0, x1);
+    const w = Math.max(2, Math.abs(x1 - x0));
+    c.save();
+    c.globalAlpha = 0.55;
+    c.fillStyle = cssVar("--info-bg");
+    c.fillRect(left, top, w, bottom - top);
+    c.globalAlpha = 1;
+    c.strokeStyle = cssVar("--accent");
+    c.lineWidth = 1.5;
+    c.beginPath();
+    c.moveTo(left, top);
+    c.lineTo(left, bottom);
+    c.moveTo(left + w, top);
+    c.lineTo(left + w, bottom);
+    c.stroke();
+    c.restore();
+}
+function drawHighlight(c, x, start, end, L, W, R, top, bottom, pulse) {
     const ht = state.highlightTs;
     if (ht === null || ht < start || ht > end)
         return;
@@ -77,6 +113,60 @@ function drawHighlight(c, x, start, end, L, W, R, top, bottom) {
     c.moveTo(px, top);
     c.lineTo(px, bottom);
     c.stroke();
+    if (pulse !== null) {
+        const cy = (top + bottom) / 2;
+        c.globalAlpha = Math.max(0, 1 - pulse);
+        c.strokeStyle = cssVar("--accent");
+        c.lineWidth = 2;
+        c.beginPath();
+        c.arc(px, cy, 4 + pulse * 18, 0, Math.PI * 2);
+        c.stroke();
+    }
+    c.restore();
+}
+function roundBox(c, x, y, w, h, r) {
+    const rr = Math.min(r, w / 2, h / 2);
+    c.beginPath();
+    c.moveTo(x + rr, y);
+    c.arcTo(x + w, y, x + w, y + h, rr);
+    c.arcTo(x + w, y + h, x, y + h, rr);
+    c.arcTo(x, y + h, x, y, rr);
+    c.arcTo(x, y, x + w, y, rr);
+    c.closePath();
+}
+function drawValueBubble(c, W, H, L, R, anchorX, lines) {
+    if (!lines.length || W < L + R + 90)
+        return;
+    const mono = cssVar("--mono");
+    const sans = cssVar("--sans");
+    const px = 8, py = 6, lineH = 14;
+    let maxW = 0;
+    for (const ln of lines) {
+        c.font = ln.bold ? "600 11px " + sans : "11px " + mono;
+        maxW = Math.max(maxW, c.measureText(ln.text).width);
+    }
+    const bw = Math.min(W - L - R - 6, Math.ceil(maxW + px * 2));
+    const bh = py * 2 + lines.length * lineH - 2;
+    let bx = anchorX + 10;
+    if (bx + bw > W - R)
+        bx = anchorX - 10 - bw;
+    bx = Math.max(L + 2, Math.min(W - R - bw, bx));
+    const by = Math.min(4, Math.max(2, H - 18 - bh));
+    c.save();
+    roundBox(c, bx, by, bw, bh, 6);
+    c.fillStyle = cssVar("--panel");
+    c.fill();
+    c.strokeStyle = cssVar("--border");
+    c.lineWidth = 1;
+    c.stroke();
+    c.clip();
+    c.textAlign = "left";
+    c.textBaseline = "top";
+    lines.forEach((ln, idx) => {
+        c.font = ln.bold ? "600 11px " + sans : "11px " + mono;
+        c.fillStyle = ln.color ?? cssVar("--fg");
+        c.fillText(ln.text, bx + px, by + py + idx * lineH);
+    });
     c.restore();
 }
 /** Y-axis label, right-aligned 4 px left of the plot so it never touches the lines. */
@@ -86,7 +176,26 @@ function axisLabel(c, text, left, y) {
     c.fillText(text, left - 4, y);
     c.textAlign = a;
 }
-function drawTimeline(canvas, buckets, hours, start, end) {
+function bucketBubbleLines(b) {
+    const [sLbl] = stateLabel(b.worst);
+    const lines = [
+        { text: fmtTimeShort(b.t) + " · " + sLbl, color: cssVar("--fg"), bold: true },
+        { text: ms(b.gw_rtt_avg) + " / " + ms(b.net_rtt_avg), color: cssVar("--net") },
+    ];
+    if (b.gw_fail || b.net_fail) {
+        lines.push({ text: t("tl.fail", { gw: b.gw_fail, net: b.net_fail }), color: cssVar("--bad") });
+    }
+    else if (b.signal_dbm !== null || b.busy_pct !== null) {
+        const extra = [];
+        if (b.signal_dbm !== null)
+            extra.push(b.signal_dbm + " dBm");
+        if (b.busy_pct !== null)
+            extra.push(Math.round(b.busy_pct) + "%");
+        lines.push({ text: extra.join(" · "), color: cssVar("--sig") });
+    }
+    return lines;
+}
+function drawTimeline(canvas, mode, name, infoId, allBuckets, hours, start, end) {
     const hoverT = views.get(canvas)?.hoverT ?? null;
     const cv = prepareCanvas(canvas);
     if (!cv)
@@ -94,12 +203,19 @@ function drawTimeline(canvas, buckets, hours, start, end) {
     const { c, W, H } = cv;
     const L = 46, R = 6;
     const pw = W - L - R;
-    const failTop = 2, failH = 16;
-    const rttTop = 22, rttH = Math.round((H - 22 - 16) * 0.55);
-    const wTop = rttTop + rttH + 6, wH = H - wTop - 16;
-    const colWidth = Math.max(1.5, pw / (hours * 60));
+    const compact = mode === "now";
+    const failTop = 2, failH = compact ? 12 : 16;
+    const rttTop = compact ? 18 : 22;
+    const rttH = Math.round((H - rttTop - 16) * 0.56);
+    const wTop = rttTop + rttH + 5, wH = Math.max(12, H - wTop - 16);
+    const spanMin = Math.max(1, (end - start) / 60e3);
+    const colWidth = Math.max(1.5, pw / spanMin);
+    const buckets = allBuckets.filter((b) => {
+        const tm = tOf(b);
+        return tm + 60e3 >= start && tm <= end;
+    });
     const x = drawTimeGrid(c, W, H, L, pw, start, end, hours, rttTop);
-    axisLabel(c, t("tl.fail_axis"), L, failTop + 12);
+    axisLabel(c, t("tl.fail_axis"), L, failTop + (compact ? 10 : 12));
     const rtts = [];
     for (const b of buckets) {
         if (b.net_rtt_avg !== null)
@@ -144,17 +260,17 @@ function drawTimeline(canvas, buckets, hours, start, end) {
         let prevT = null;
         for (const b of buckets) {
             const v = b[key];
-            const t = tOf(b);
+            const tm = tOf(b);
             if (v === null) {
                 prevT = null;
                 continue;
             }
-            const px = x(t) + colWidth / 2, py = yf(v);
-            if (prevT === null || t - prevT > 120e3)
+            const px = x(tm) + colWidth / 2, py = yf(v);
+            if (prevT === null || tm - prevT > 120e3)
                 c.moveTo(px, py);
             else
                 c.lineTo(px, py);
-            prevT = t;
+            prevT = tm;
         }
         c.stroke();
     };
@@ -164,10 +280,18 @@ function drawTimeline(canvas, buckets, hours, start, end) {
         const yS = (v) => wTop + wH - ((Math.max(-90, Math.min(-30, v)) + 90) / 60) * wH;
         line("signal_dbm", cssVar("--sig"), yS);
     }
-    if (hoverT)
-        drawCrosshair(c, x(hoverT) + colWidth / 2, L, W, R, failTop, H - 14);
-    drawHighlight(c, x, start, end, L, W, R, failTop, H - 14);
-    views.set(canvas, { start, end, L, pw, buckets, hoverT });
+    if (mode === "sessions") {
+        drawBrushBand(c, x, L, W, R, failTop, H - 14);
+        drawHighlight(c, x, start, end, L, W, R, failTop, H - 14, pulseProgress);
+    }
+    if (hoverT !== null) {
+        const hx = x(hoverT) + colWidth / 2;
+        drawCrosshair(c, hx, L, W, R, failTop, H - 14);
+        const hovered = buckets.find((b) => tOf(b) === hoverT);
+        if (hovered)
+            drawValueBubble(c, W, H, L, R, hx, bucketBubbleLines(hovered));
+    }
+    views.set(canvas, { mode, name, infoId, start, end, hours, L, pw, buckets, hoverT });
 }
 function drawLanTimeline(canvas, points, allBuckets, hours, start, end) {
     const hoverT = lanViews.get(canvas)?.hoverT ?? null;
@@ -179,24 +303,24 @@ function drawLanTimeline(canvas, points, allBuckets, hours, start, end) {
     const pw = W - L - R;
     const failTop = 2, failH = 12;
     const chartTop = 18, chartH = H - chartTop - 16;
-    const colWidth = Math.max(1.5, pw / (hours * 60));
+    const spanMin = Math.max(1, (end - start) / 60e3);
+    const colWidth = Math.max(1.5, pw / spanMin);
     const x = drawTimeGrid(c, W, H, L, pw, start, end, hours, chartTop);
     axisLabel(c, t("tl.fail_axis"), L, failTop + 10);
-    // Align failures from all interfaces on the top strip.
     const failFrac = new Map();
     for (const b of allBuckets) {
         const f = Math.max(b.gw_fail, b.net_fail);
         if (!f || !b.ticks)
             continue;
-        const t = tOf(b);
-        if (t < start || t > end)
+        const tm = tOf(b);
+        if (tm < start || tm > end)
             continue;
-        failFrac.set(t, Math.max(failFrac.get(t) ?? 0, Math.min(1, f / b.ticks)));
+        failFrac.set(tm, Math.max(failFrac.get(tm) ?? 0, Math.min(1, f / b.ticks)));
     }
     c.fillStyle = cssVar("--bad");
-    for (const [t, frac] of failFrac) {
+    for (const [tm, frac] of failFrac) {
         const h = Math.max(4, frac * failH);
-        c.fillRect(x(t), failTop + failH - h, Math.max(1.5, colWidth), h);
+        c.fillRect(x(tm), failTop + failH - h, Math.max(1.5, colWidth), h);
     }
     const pts = [...points]
         .filter((p) => pOf(p) >= start && pOf(p) <= end)
@@ -273,10 +397,20 @@ function drawLanTimeline(canvas, points, allBuckets, hours, start, end) {
         }
         c.restore();
     }
-    if (hoverT)
-        drawCrosshair(c, x(hoverT), L, W, R, failTop, H - 14);
-    drawHighlight(c, x, start, end, L, W, R, failTop, H - 14);
-    lanViews.set(canvas, { start, end, L, pw, points: pts, hoverT });
+    drawBrushBand(c, x, L, W, R, failTop, H - 14);
+    drawHighlight(c, x, start, end, L, W, R, failTop, H - 14, pulseProgress);
+    if (hoverT !== null) {
+        const hx = x(hoverT);
+        drawCrosshair(c, hx, L, W, R, failTop, H - 14);
+        const hovered = pts.find((p) => pOf(p) === hoverT);
+        if (hovered) {
+            drawValueBubble(c, W, H, L, R, hx, [
+                { text: fmtTimeShort(hovered.t), color: cssVar("--fg"), bold: true },
+                { text: "ARP " + hovered.arp_alive + " · ping " + hovered.ping_alive, color: cssVar("--info") },
+            ]);
+        }
+    }
+    lanViews.set(canvas, { infoId: "tl-info", start, end, hours, L, pw, points: pts, allBuckets, hoverT });
 }
 function bucketInfo(name, b) {
     const p = [name, fmtTime(b.t)];
@@ -295,110 +429,390 @@ function bucketInfo(name, b) {
         p.push(t("tl.worst", { s: stateLabel(b.worst)[0] }));
     return p.join(" · ");
 }
-function onTimelinePointer(cv, name, ev) {
+function redrawTimelineCanvas(cv) {
     const g = views.get(cv);
-    if (!g || !g.buckets.length)
+    if (!g)
         return;
-    const r = cv.getBoundingClientRect();
-    const t = g.start + ((ev.clientX - r.left - g.L) / g.pw) * (g.end - g.start);
-    let best = null, bd = Infinity;
-    for (const b of g.buckets) {
-        const d = Math.abs(tOf(b) + 30e3 - t);
-        if (d < bd) {
-            bd = d;
-            best = b;
-        }
-    }
-    const maxSnap = Math.max(5 * 60e3, (g.end - g.start) / 40);
-    if (best && bd < maxSnap) {
-        g.hoverT = tOf(best);
-        drawTimeline(cv, g.buckets, state.hours, g.start, g.end);
-        byId("tl-info").textContent = bucketInfo(name, best);
-    }
+    drawTimeline(cv, g.mode, g.name, g.infoId, g.buckets, g.hours, g.start, g.end);
 }
-function onTimelineLeave(cv, name) {
-    const g = views.get(cv);
-    if (g?.hoverT) {
-        g.hoverT = null;
-        drawTimeline(cv, state.minutes[name] ?? [], state.hours, g.start, g.end);
-    }
-}
-function onLanPointer(cv, allBuckets, ev) {
+function redrawLanCanvas(cv) {
     const g = lanViews.get(cv);
-    if (!g || !g.points.length)
+    if (!g)
         return;
-    const r = cv.getBoundingClientRect();
-    const tm = g.start + ((ev.clientX - r.left - g.L) / g.pw) * (g.end - g.start);
-    let best = null, bd = Infinity;
-    for (const p of g.points) {
-        const d = Math.abs(pOf(p) - tm);
-        if (d < bd) {
-            bd = d;
-            best = p;
-        }
+    drawLanTimeline(cv, g.points, g.allBuckets, g.hours, g.start, g.end);
+}
+function redrawAllSessionCanvases() {
+    const allBuckets = Object.values(state.minutes).flat();
+    const [start, end] = sessionTimeWindow(state.minutes, state.lanSeries, state.hours);
+    const hours = (end - start) / 3600e3;
+    for (const item of sessionCanvases) {
+        if (item.isLan)
+            drawLanTimeline(item.cv, state.lanSeries, allBuckets, hours, start, end);
+        else
+            drawTimeline(item.cv, "sessions", item.name, "tl-info", state.minutes[item.name] ?? [], hours, start, end);
     }
-    const maxSnap = Math.max(10 * 60e3, (g.end - g.start) / 25);
-    if (best && bd < maxSnap) {
-        g.hoverT = pOf(best);
-        drawLanTimeline(cv, g.points, allBuckets, state.hours, g.start, g.end);
+}
+function clearInfoText(infoId) {
+    byId(infoId).textContent = state.tlInspected ? "" : t("live.tl_hint");
+}
+function syncZoomBar() {
+    const bar = byId("tl-zoom-bar");
+    const br = state.brushRange;
+    if (!br) {
+        bar.hidden = true;
+        byId("tl-zoom-label").textContent = "";
+        return;
+    }
+    bar.hidden = false;
+    byId("tl-zoom-label").textContent = t("tl.zoom_range", {
+        from: fmtTimeShort(new Date(br[0]).toISOString()),
+        to: fmtTimeShort(new Date(br[1]).toISOString()),
+    });
+}
+/** Clears active brush-zoom on the Sessions timeline and optionally redraws + notifies listeners. */
+export function resetBrushZoom(redraw = true) {
+    const had = state.brushRange !== null;
+    state.brushRange = null;
+    dragBand = null;
+    syncZoomBar();
+    if (had) {
+        if (redraw)
+            renderTimelines();
+        bus.dispatchEvent(new Event("brush-change"));
+    }
+}
+function attachTimelineHandlers(cv, mode, name, infoId) {
+    let drag = null;
+    const clientToT = (clientX, g) => {
+        const r = cv.getBoundingClientRect();
+        const frac = Math.max(0, Math.min(1, (clientX - r.left - g.L) / Math.max(1, g.pw)));
+        return g.start + frac * (g.end - g.start);
+    };
+    const inspectAtX = (clientX) => {
+        const g = views.get(cv);
+        if (!g || !g.buckets.length)
+            return;
+        const tm = clientToT(clientX, g);
+        let best = null, bd = Infinity;
+        for (const b of g.buckets) {
+            const d = Math.abs(tOf(b) + 30e3 - tm);
+            if (d < bd) {
+                bd = d;
+                best = b;
+            }
+        }
+        const maxSnap = Math.max(5 * 60e3, (g.end - g.start) / 40);
+        if (best && bd < maxSnap) {
+            state.tlInspected = true;
+            g.hoverT = tOf(best);
+            redrawTimelineCanvas(cv);
+            byId(infoId).textContent = bucketInfo(name, best);
+        }
+    };
+    cv.addEventListener("pointerdown", (ev) => {
+        const g = views.get(cv);
+        if (!g)
+            return;
+        if (mode === "sessions" && ev.button === 0 && g.buckets.length) {
+            drag = { id: ev.pointerId, x: ev.clientX, t: clientToT(ev.clientX, g), active: false };
+            try {
+                cv.setPointerCapture(ev.pointerId);
+            }
+            catch { /* ignore */ }
+        }
+        inspectAtX(ev.clientX);
+    });
+    cv.addEventListener("pointermove", (ev) => {
+        const g = views.get(cv);
+        if (!g)
+            return;
+        if (drag && drag.id === ev.pointerId && Math.abs(ev.clientX - drag.x) >= 6) {
+            drag.active = true;
+            const curT = clientToT(ev.clientX, g);
+            dragBand = [Math.min(drag.t, curT), Math.max(drag.t, curT)];
+            g.hoverT = null;
+            redrawAllSessionCanvases();
+            byId(infoId).textContent = fmtTimeShort(new Date(dragBand[0]).toISOString()) + " – " + fmtTimeShort(new Date(dragBand[1]).toISOString());
+            return;
+        }
+        if (!drag)
+            inspectAtX(ev.clientX);
+    });
+    const endDrag = (ev) => {
+        if (!drag || drag.id !== ev.pointerId)
+            return;
+        const d = drag;
+        drag = null;
+        try {
+            if (cv.hasPointerCapture(ev.pointerId))
+                cv.releasePointerCapture(ev.pointerId);
+        }
+        catch { /* ignore */ }
+        const g = views.get(cv);
+        if (d.active && g) {
+            const curT = clientToT(ev.clientX, g);
+            const t0 = Math.min(d.t, curT);
+            const t1 = Math.max(d.t, curT);
+            dragBand = null;
+            if (t1 - t0 >= 2 * 60e3) {
+                state.brushRange = [t0, t1];
+                syncZoomBar();
+                renderTimelines();
+                bus.dispatchEvent(new Event("brush-change"));
+                return;
+            }
+            redrawAllSessionCanvases();
+            clearInfoText(infoId);
+        }
+    };
+    cv.addEventListener("pointerup", endDrag);
+    cv.addEventListener("pointercancel", endDrag);
+    cv.addEventListener("pointerleave", () => {
+        if (drag)
+            return;
+        const g = views.get(cv);
+        if (g?.hoverT) {
+            g.hoverT = null;
+            redrawTimelineCanvas(cv);
+            clearInfoText(infoId);
+        }
+    });
+    cv.addEventListener("keydown", (ev) => {
+        const g = views.get(cv);
+        if (!g)
+            return;
+        if (ev.key === "Escape") {
+            if (g.hoverT !== null) {
+                g.hoverT = null;
+                redrawTimelineCanvas(cv);
+                clearInfoText(infoId);
+            }
+            else if (mode === "sessions" && state.brushRange) {
+                resetBrushZoom();
+            }
+            return;
+        }
+        if (ev.key !== "ArrowLeft" && ev.key !== "ArrowRight")
+            return;
+        if (!g.buckets.length)
+            return;
+        ev.preventDefault();
+        const step = ev.shiftKey ? 10 : 1;
+        const dir = ev.key === "ArrowLeft" ? -step : step;
+        let idx = g.hoverT !== null ? g.buckets.findIndex((b) => tOf(b) === g.hoverT) : -1;
+        if (idx < 0)
+            idx = dir < 0 ? g.buckets.length - 1 : 0;
+        else
+            idx = Math.max(0, Math.min(g.buckets.length - 1, idx + dir));
+        const chosen = g.buckets[idx];
+        if (!chosen)
+            return;
+        state.tlInspected = true;
+        g.hoverT = tOf(chosen);
+        redrawTimelineCanvas(cv);
+        byId(infoId).textContent = bucketInfo(name, chosen);
+    });
+}
+function attachLanHandlers(cv) {
+    const inspectAtX = (clientX) => {
+        const g = lanViews.get(cv);
+        if (!g || !g.points.length)
+            return;
+        const r = cv.getBoundingClientRect();
+        const tm = g.start + ((clientX - r.left - g.L) / Math.max(1, g.pw)) * (g.end - g.start);
+        let best = null, bd = Infinity;
+        for (const p of g.points) {
+            const d = Math.abs(pOf(p) - tm);
+            if (d < bd) {
+                bd = d;
+                best = p;
+            }
+        }
+        const maxSnap = Math.max(10 * 60e3, (g.end - g.start) / 25);
+        if (best && bd < maxSnap) {
+            state.tlInspected = true;
+            g.hoverT = pOf(best);
+            redrawLanCanvas(cv);
+            byId("tl-info").textContent =
+                t("tl.lan_info", { t: fmtTime(best.t), arp: best.arp_alive, ping: best.ping_alive, seen: best.unique_seen });
+        }
+    };
+    cv.addEventListener("pointermove", (ev) => inspectAtX(ev.clientX));
+    cv.addEventListener("pointerdown", (ev) => inspectAtX(ev.clientX));
+    cv.addEventListener("pointerleave", () => {
+        const g = lanViews.get(cv);
+        if (g?.hoverT) {
+            g.hoverT = null;
+            redrawLanCanvas(cv);
+            clearInfoText("tl-info");
+        }
+    });
+    cv.addEventListener("keydown", (ev) => {
+        const g = lanViews.get(cv);
+        if (!g)
+            return;
+        if (ev.key === "Escape") {
+            if (g.hoverT !== null) {
+                g.hoverT = null;
+                redrawLanCanvas(cv);
+                clearInfoText("tl-info");
+            }
+            else if (state.brushRange) {
+                resetBrushZoom();
+            }
+            return;
+        }
+        if (ev.key !== "ArrowLeft" && ev.key !== "ArrowRight")
+            return;
+        if (!g.points.length)
+            return;
+        ev.preventDefault();
+        const dir = ev.key === "ArrowLeft" ? -1 : 1;
+        let idx = g.hoverT !== null ? g.points.findIndex((p) => pOf(p) === g.hoverT) : -1;
+        if (idx < 0)
+            idx = dir < 0 ? g.points.length - 1 : 0;
+        else
+            idx = Math.max(0, Math.min(g.points.length - 1, idx + dir));
+        const chosen = g.points[idx];
+        if (!chosen)
+            return;
+        state.tlInspected = true;
+        g.hoverT = pOf(chosen);
+        redrawLanCanvas(cv);
         byId("tl-info").textContent =
-            t("tl.lan_info", { t: fmtTime(best.t), arp: best.arp_alive, ping: best.ping_alive, seen: best.unique_seen });
-    }
-}
-function onLanLeave(cv, allBuckets) {
-    const g = lanViews.get(cv);
-    if (g?.hoverT) {
-        g.hoverT = null;
-        drawLanTimeline(cv, g.points, allBuckets, state.hours, g.start, g.end);
-    }
+            t("tl.lan_info", { t: fmtTime(chosen.t), arp: chosen.arp_alive, ping: chosen.ping_alive, seen: chosen.unique_seen });
+    });
 }
 export function renderTimelines() {
     const box = byId("timelines");
+    syncZoomBar();
     const names = Object.keys(state.minutes);
     const lan = state.lanSeries;
     if (!names.length && !lan.length) {
+        sessionCanvases = [];
         box.replaceChildren(el("div", { class: "empty", text: t("tl.no_data") }));
         return;
     }
-    const [start, end] = timeWindow(state.minutes, lan, state.hours);
+    const [start, end] = sessionTimeWindow(state.minutes, lan, state.hours);
+    const hours = (end - start) / 3600e3;
     const canvases = names.map((name) => {
-        const cv = el("canvas", { "data-iface": name, "aria-label": t("tl.aria", { n: name }), role: "img" });
-        cv.addEventListener("pointermove", (ev) => onTimelinePointer(cv, name, ev));
-        cv.addEventListener("pointerdown", (ev) => onTimelinePointer(cv, name, ev));
-        cv.addEventListener("pointerleave", () => onTimelineLeave(cv, name));
-        return [cv, name];
+        const cv = el("canvas", {
+            tabindex: 0,
+            "data-iface": name,
+            "aria-label": t("tl.aria", { n: name }) + ". " + t("tl.aria_keys"),
+            role: "img",
+        });
+        attachTimelineHandlers(cv, "sessions", name, "tl-info");
+        return { cv, name, isLan: false };
     });
-    const nodes = canvases.map(([cv, name]) => el("div", { class: "tl" }, el("div", { class: "tl-title", text: name }), cv));
-    const allBuckets = Object.values(state.minutes).flat();
-    let lanCv = null;
+    const nodes = canvases.map(({ cv, name }) => el("div", { class: "tl" }, el("div", { class: "tl-title", text: name }), cv));
     if (lan.length) {
-        lanCv = el("canvas", { "aria-label": t("tl.lan_title"), role: "img" });
-        const cvRef = lanCv;
-        cvRef.addEventListener("pointermove", (ev) => onLanPointer(cvRef, allBuckets, ev));
-        cvRef.addEventListener("pointerdown", (ev) => onLanPointer(cvRef, allBuckets, ev));
-        cvRef.addEventListener("pointerleave", () => onLanLeave(cvRef, allBuckets));
+        const lanCv = el("canvas", {
+            tabindex: 0,
+            "aria-label": t("tl.lan_title") + ". " + t("tl.aria_keys"),
+            role: "img",
+        });
+        attachLanHandlers(lanCv);
+        canvases.push({ cv: lanCv, name: "", isLan: true });
         nodes.push(el("div", { class: "tl tl-lan" }, el("div", { class: "tl-title", text: t("tl.lan_title") }), lanCv));
     }
+    sessionCanvases = canvases;
     box.replaceChildren(...nodes);
-    for (const [cv, name] of canvases)
-        drawTimeline(cv, state.minutes[name] ?? [], state.hours, start, end);
-    if (lanCv)
-        drawLanTimeline(lanCv, lan, allBuckets, state.hours, start, end);
+    const allBuckets = Object.values(state.minutes).flat();
+    for (const item of canvases) {
+        if (item.isLan)
+            drawLanTimeline(item.cv, lan, allBuckets, hours, start, end);
+        else
+            drawTimeline(item.cv, "sessions", item.name, "tl-info", state.minutes[item.name] ?? [], hours, start, end);
+    }
+}
+/** Compact 1-hour timeline rendered on the Now view. */
+export function renderNowTimeline() {
+    const box = byId("now-timelines");
+    const names = Object.keys(state.liveMinutes);
+    if (!names.length) {
+        nowCanvases = [];
+        box.replaceChildren(el("div", { class: "empty small", text: t("tl.no_data") }));
+        return;
+    }
+    const [start, end] = nowTimeWindow();
+    nowCanvases = names.map((name) => {
+        const cv = el("canvas", {
+            tabindex: 0,
+            "data-iface": name,
+            "aria-label": t("tl.aria", { n: name }) + ". " + t("tl.aria_keys"),
+            role: "img",
+        });
+        attachTimelineHandlers(cv, "now", name, "now-tl-info");
+        return { cv, name };
+    });
+    box.replaceChildren(...nowCanvases.map(({ cv, name }) => el("div", { class: "tl tl-compact" }, el("div", { class: "tl-title", text: name }), cv)));
+    for (const { cv, name } of nowCanvases) {
+        drawTimeline(cv, "now", name, "now-tl-info", state.liveMinutes[name] ?? [], 1, start, end);
+    }
 }
 export function focusTimestamp(iso) {
     const tm = new Date(iso).getTime();
     if (!isFinite(tm))
         return;
     state.highlightTs = tm;
-    renderTimelines();
+    if (state.brushRange && (tm < state.brushRange[0] || tm > state.brushRange[1])) {
+        resetBrushZoom(false);
+    }
+    if (pulseRaf !== null) {
+        cancelAnimationFrame(pulseRaf);
+        pulseRaf = null;
+    }
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        pulseProgress = null;
+        renderTimelines();
+    }
+    else {
+        renderTimelines();
+        const t0 = performance.now();
+        const step = (now) => {
+            const p = Math.min(1, (now - t0) / 600);
+            pulseProgress = p;
+            redrawAllSessionCanvases();
+            if (p < 1) {
+                pulseRaf = requestAnimationFrame(step);
+            }
+            else {
+                pulseRaf = null;
+                pulseProgress = null;
+                redrawAllSessionCanvases();
+            }
+        };
+        pulseRaf = requestAnimationFrame(step);
+    }
     byId("tl-info").textContent = t("tl.focused", { t: fmtTime(iso) });
     byId("h-timeline").scrollIntoView({ behavior: "smooth", block: "start" });
 }
 export async function loadMinutes() {
     const r = await fetchMinutes(state.selectedSession, state.hours);
-    if (r) {
-        state.minutes = r.ifaces;
-        state.lanSeries = r.lan;
-        renderTimelines();
+    if (!r) {
+        if (!Object.keys(state.minutes).length) {
+            byId("timelines").replaceChildren(errorState(t("tl.load_err"), () => void loadMinutes()));
+        }
+        return;
     }
+    state.minutes = r.ifaces;
+    state.lanSeries = r.lan;
+    renderTimelines();
+    if (state.selectedSession === LIVE && state.hours === 1) {
+        state.liveMinutes = r.ifaces;
+        renderNowTimeline();
+    }
+}
+/** Loads the last hour of minute buckets for the Now view. */
+export async function loadLiveMinutes() {
+    const r = await fetchMinutes(LIVE, 1);
+    if (!r) {
+        if (!Object.keys(state.liveMinutes).length) {
+            byId("now-timelines").replaceChildren(errorState(t("tl.load_err"), () => void loadLiveMinutes()));
+        }
+        return;
+    }
+    state.liveMinutes = r.ifaces;
+    renderNowTimeline();
 }

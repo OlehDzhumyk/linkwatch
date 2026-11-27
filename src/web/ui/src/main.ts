@@ -5,32 +5,49 @@ import { renderCards, renderHeader } from "./cards.js";
 import { byId, el } from "./dom.js";
 import { loadEvents, loadSpeed, renderEvents, renderSpeed } from "./events.js";
 import { LOCALES, applyStaticI18n, getLang, initI18n, setLang } from "./i18n.js";
-import { connect, loadStatus, syncRangeButtons } from "./live.js";
+import { connect, loadStatus, syncRangeButtons, updateStaleState } from "./live.js";
 import { initMeasure, loadControl, loadPlan, openMeasureDialog, renderMeasure, renderMeasureCurrent, renderPlan } from "./measure.js";
 import { renderNow, renderNowIncidents, renderNowMeasure } from "./now.js";
-import { loadLiveReport, loadReport, renderPointsCompare, renderReport } from "./report.js";
-import { initSessions, refreshCompare, renderSessionList } from "./sessions.js";
+import { loadLiveReport, loadReport, renderIncidentsForCurrentReport, renderPointsCompare, renderReport } from "./report.js";
+import { initSessions, refreshCompare, renderSessionList, setSessionDetailOpen } from "./sessions.js";
 import { focusPoint, initSiteControls, loadSessions, loadSite, refreshSelection, renderSite } from "./site.js";
 import { EVENT_FILTERS, LIVE, SCAN_FILTERS, TABS, THEMES, type Tab, type Theme, bus, oneOf, state } from "./state.js";
 import { renderAlertBar, renderSystem } from "./system.js";
-import { focusTimestamp, loadMinutes, renderTimelines } from "./timeline.js";
+import { focusTimestamp, loadLiveMinutes, loadMinutes, renderNowTimeline, renderTimelines, resetBrushZoom } from "./timeline.js";
 import { initTips, tip } from "./tips.js";
+import { initDisclosurePersistence } from "./ui.js";
 import { loadScan, renderScan, renderTopology, renderWifiLink } from "./wifi.js";
 
 const THEME_KEY = "lw-theme";
 /** Hashes of the old four-tab layout, so bookmarks keep working. */
 const LEGACY_TABS: { readonly [k: string]: Tab } = { live: "now", wifi: "diag", system: "diag" };
+const SESSION_ID_RE = /^[A-Za-z0-9_.-]+$/;
 
-function tabFromHash(): Tab {
+function parseHash(): { tab: Tab; sessionId: string | null } {
   const raw = window.location.hash.replace(/^#/, "");
-  if (oneOf(TABS, raw)) return raw;
-  return LEGACY_TABS[raw] ?? "now";
+  if (raw.startsWith("sessions/")) {
+    try {
+      const id = decodeURIComponent(raw.slice("sessions/".length));
+      if (SESSION_ID_RE.test(id)) return { tab: "sessions", sessionId: id === "live" ? LIVE : id };
+    } catch { /* ignore malformed percent-encoding */ }
+    return { tab: "sessions", sessionId: null };
+  }
+  if (oneOf(TABS, raw)) return { tab: raw, sessionId: null };
+  return { tab: LEGACY_TABS[raw] ?? "now", sessionId: null };
+}
+
+function syncHash(): void {
+  const target = state.tab === "sessions" && state.selectedSession !== LIVE
+    ? "#sessions/" + encodeURIComponent(state.selectedSession)
+    : "#" + state.tab;
+  if (window.location.hash !== target) history.replaceState(null, "", target);
 }
 
 function redrawActiveTab(): void {
   if (state.tab === "now") {
     renderTopology();
     renderCards();
+    renderNowTimeline();
     renderNow();
   } else if (state.tab === "sessions") {
     renderSessionList();
@@ -59,9 +76,7 @@ export function setTab(tab: Tab, updateHash = true): void {
     b.tabIndex = active ? 0 : -1;
   }
   for (const name of TABS) byId("tab-" + name).hidden = name !== tab;
-  if (updateHash && window.location.hash !== "#" + tab) {
-    history.replaceState(null, "", "#" + tab);
-  }
+  if (updateHash) syncHash();
   window.scrollTo({ top: 0 });
   requestAnimationFrame(redrawActiveTab);
 }
@@ -109,7 +124,31 @@ function initMenu(btnId: string, menuId: string): void {
   document.addEventListener("keydown", (ev) => {
     if (ev.key === "Escape" && !menu.hidden) { close(); btn.focus(); }
   });
-  for (const a of menu.querySelectorAll("a")) a.addEventListener("click", close);
+  for (const a of menu.querySelectorAll("a")) {
+    a.addEventListener("click", (ev) => {
+      if (a.getAttribute("aria-disabled") === "true") {
+        ev.preventDefault();
+        return;
+      }
+      close();
+    });
+  }
+}
+
+function applyHashRoute(first = false): void {
+  const { tab, sessionId } = parseHash();
+  if (sessionId) {
+    const changed = state.selectedSession !== sessionId;
+    state.selectedSession = sessionId;
+    state.rangeUserSet = true;
+    state.highlightTs = null;
+    state.brushRange = null;
+    setSessionDetailOpen(true);
+    setTab(tab, false);
+    if (!first && changed) bus.dispatchEvent(new Event("session-selected"));
+    return;
+  }
+  setTab(tab, false);
 }
 
 function initTabs(): void {
@@ -136,11 +175,11 @@ function initTabs(): void {
       }
     });
   }
-  window.addEventListener("hashchange", () => setTab(tabFromHash(), false));
+  window.addEventListener("hashchange", () => applyHashRoute(false));
   bus.addEventListener("switch-tab", (ev) => {
     if (ev instanceof CustomEvent && typeof ev.detail === "string" && oneOf(TABS, ev.detail)) setTab(ev.detail);
   });
-  setTab(tabFromHash(), false);
+  applyHashRoute(true);
 }
 
 function initControls(): void {
@@ -167,6 +206,9 @@ function initControls(): void {
   initTips();
   initAudit();
   initSessions();
+  for (const id of ["findings-disc", "events-disc", "points-compare-panel", "router-audit-panel"]) {
+    initDisclosurePersistence(id);
+  }
   rebuildStaticTips();
   langSel.addEventListener("change", () => {
     if (!setLang(langSel.value)) return;
@@ -174,6 +216,7 @@ function initControls(): void {
     rebuildStaticTips();
     renderHeader();
     renderAlertBar();
+    updateStaleState();
     renderSpeed();
     renderEvents();
     renderMeasure();
@@ -181,6 +224,7 @@ function initControls(): void {
     refreshCompare();
     refreshSelection();
     renderReport();
+    renderNowTimeline();
     redrawActiveTab();
   });
   initTabs();
@@ -206,10 +250,12 @@ function initControls(): void {
     b.addEventListener("click", () => {
       state.rangeUserSet = true;
       state.hours = Number(b.dataset["h"]);
+      resetBrushZoom(false);
       syncRangeButtons();
       void loadMinutes();
     });
   }
+  byId("tl-zoom-reset").addEventListener("click", () => resetBrushZoom());
 
   const evFilter = byId("ev-filter");
   for (const b of evFilter.querySelectorAll<HTMLButtonElement>("button")) {
@@ -238,7 +284,10 @@ function initControls(): void {
 
   bus.addEventListener("events-change", () => renderSystem());
   bus.addEventListener("live-report", () => { renderNowIncidents(); renderNow(); });
+  bus.addEventListener("brush-change", () => renderIncidentsForCurrentReport());
   bus.addEventListener("session-selected", () => {
+    resetBrushZoom(false);
+    syncHash();
     renderSessionList();
     state.report = null;
     renderReport();
@@ -246,12 +295,14 @@ function initControls(): void {
   });
   bus.addEventListener("focus-time", (ev) => {
     if (!(ev instanceof CustomEvent) || typeof ev.detail !== "string") return;
+    setSessionDetailOpen(true);
     if (state.tab !== "sessions") setTab("sessions");
     requestAnimationFrame(() => focusTimestamp(ev.detail));
   });
   bus.addEventListener("focus-live-time", (ev) => {
     if (!(ev instanceof CustomEvent) || typeof ev.detail !== "string") return;
     const ts = ev.detail;
+    setSessionDetailOpen(true);
     setTab("sessions");
     if (state.selectedSession !== LIVE) {
       state.selectedSession = LIVE;
@@ -297,6 +348,7 @@ function onSessionChange(): void {
     void loadScan();
     void loadAudit().then(loadAdvice);
     void loadLiveReport();
+    void loadLiveMinutes();
     if (state.selectedSession === LIVE) {
       void loadMinutes();
       void loadEvents();
@@ -311,6 +363,7 @@ async function main(): Promise<void> {
   bus.addEventListener("session-change", onSessionChange);
   await loadStatus();
   void loadControl().then(() => { renderHeader(); renderAudit(); renderNowMeasure(); });
+  void loadLiveMinutes();
   void loadMinutes();
   void loadEvents();
   void loadReport();
@@ -321,11 +374,13 @@ async function main(): Promise<void> {
   // The map colours come from the plan: load the site first, then the plan.
   void loadSite().then(loadPlan).then(() => { renderHeader(); renderPointsCompare(); renderNowMeasure(); });
   connect();
+  setInterval(updateStaleState, 5000);
   setInterval(() => { renderMeasureCurrent(); renderNowMeasure(); renderHeader(); }, 30000);
   setInterval(() => void loadPlan().then(renderPointsCompare), 300000);
   setInterval(() => { if (!state.live) void loadStatus(); }, 5000);
   setInterval(() => { if (state.live) void loadStatus(); }, 30000);
   setInterval(() => {
+    void loadLiveMinutes();
     void loadMinutes();
     void loadLiveReport();
   }, 60000);

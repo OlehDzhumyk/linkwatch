@@ -29,8 +29,13 @@ export async function loadStatus(): Promise<void> {
   const first = !state.status;
   const before = state.status?.session?.session;
   const r = await fetchStatus();
-  if (!r) return;
+  if (!r) {
+    updateStaleState();
+    return;
+  }
   state.status = r;
+  state.lastUpdateMs = Date.now();
+  updateStaleState();
   if (!first && r.session?.session !== before) bus.dispatchEvent(new Event("session-change"));
   if (!state.rangeUserSet && state.selectedSession === LIVE && r.started) {
     const ageMs = Date.now() - new Date(r.started).getTime();
@@ -58,11 +63,29 @@ function scheduleCards(): void {
   cardTimer = setTimeout(() => { cardTimer = null; renderHeader(); renderCards(); renderHero(); renderWifiLink(); }, 1000);
 }
 
+const STALE_AFTER_MS = 60_000;
+
+export function updateStaleState(): void {
+  const stale = state.lastUpdateMs > 0 && Date.now() - state.lastUpdateMs > STALE_AFTER_MS;
+  byId("now-stale").hidden = !stale;
+  const conn = byId("conn");
+  const wrap = byId("conn-wrap");
+  const txt = byId("conn-txt");
+  if (stale) {
+    conn.className = "conn stale";
+    wrap.title = t("conn.stale");
+    txt.textContent = t("conn.stale");
+  } else {
+    conn.className = "conn " + (state.live ? "live" : "down");
+    const key = state.live ? "conn.live" : "conn.reconnecting";
+    wrap.title = t(key);
+    txt.textContent = t(key);
+  }
+}
+
 function setConn(ok: boolean): void {
   state.live = ok;
-  byId("conn").className = "conn " + (ok ? "live" : "down");
-  byId("conn-wrap").title = t(ok ? "conn.live" : "conn.reconnecting");
-  byId("conn-txt").textContent = t(ok ? "conn.live" : "conn.reconnecting");
+  updateStaleState();
 }
 
 /** Live entry of an interface; created when the feed names one the status does not have yet. */
@@ -81,6 +104,8 @@ function ifaceOf(name: string): IfaceStatus | null {
 }
 
 function onEnvelope(env: Envelope): void {
+  state.lastUpdateMs = Date.now();
+  updateStaleState();
   switch (env.type) {
     case "sample": {
       recordSamplePoint(env);

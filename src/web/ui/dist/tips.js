@@ -32,6 +32,8 @@ export function tip(key) {
 }
 function positionTip(wrap) {
     wrap.classList.remove("tip-align-right", "tip-below");
+    if (window.innerWidth < 600)
+        return;
     const box = wrap.querySelector(".tip-box");
     if (!(box instanceof HTMLElement))
         return;

@@ -51,8 +51,10 @@ export interface State {
   hours: number;
   rangeUserSet: boolean;
   minutes: { [iface: string]: MinuteBucket[] };
+  liveMinutes: { [iface: string]: MinuteBucket[] };
   lanSeries: LanPoint[];
   liveRing: Map<string, LivePoint[]>;
+  lastUpdateMs: number;
   events: Envelope[];
   evFilter: EventFilter;
   showAll: boolean;
@@ -61,6 +63,7 @@ export interface State {
   scanFilter: ScanFilter;
   site: SiteResponse | null;
   sessions: SessionEntry[];
+  sessionsLoaded: boolean;
   building: string | null;
   /** Full id of the flat drawn in detail (`B1/F2`). */
   unit: string | null;
@@ -79,8 +82,11 @@ export interface State {
   liveReport: ReportResponse | null;
   /** Sessions ticked for comparison (ids, order of ticking). */
   compareSel: string[];
+  compareTol: number;
   compare: CompareReport | null;
   highlightTs: number | null;
+  brushRange: readonly [number, number] | null;
+  tlInspected: boolean;
   audit: RouterAudit | null;
   advice: AdviceResponse | null;
   cve: CveLookupResponse | null;
@@ -100,6 +106,7 @@ export type AdjFloor = (typeof ADJ_FLOORS)[number];
  * "focus-time": CustomEvent<string> highlights an incident timestamp on the timeline.
  * "focus-point": CustomEvent<string> jumps to a point on the floor plan.
  * "session-selected": user switched between Live and a historical session.
+ * "brush-change": timeline brush zoom range changed (filter incidents list).
  */
 export const bus = new EventTarget();
 
@@ -109,8 +116,10 @@ export const state: State = {
   hours: 24,
   rangeUserSet: false,
   minutes: {},
+  liveMinutes: {},
   lanSeries: [],
   liveRing: new Map(),
+  lastUpdateMs: 0,
   events: [],
   evFilter: "important",
   showAll: false,
@@ -119,6 +128,7 @@ export const state: State = {
   scanFilter: "all",
   site: null,
   sessions: [],
+  sessionsLoaded: false,
   building: null,
   unit: null,
   selected: null,
@@ -133,8 +143,11 @@ export const state: State = {
   report: null,
   liveReport: null,
   compareSel: [],
+  compareTol: 2,
   compare: null,
   highlightTs: null,
+  brushRange: null,
+  tlInspected: false,
   audit: null,
   advice: null,
   cve: null,

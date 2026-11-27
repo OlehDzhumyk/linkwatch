@@ -95,6 +95,25 @@
       </aside>
     </div>
 
+    <section class="card-sec" id="now-tl-panel" aria-labelledby="h-now-tl">
+      <div class="sec-head">
+        <div class="title-row">
+          <h2 id="h-now-tl" data-i18n="now.last_hour">Last hour</h2>
+          <span id="now-stale" class="pill small warn" hidden data-i18n="now.stale">Stale data</span>
+        </div>
+        <a class="link" href="#sessions" data-i18n="now.open_timeline">Full timeline</a>
+      </div>
+      <div id="now-timelines"></div>
+      <div class="legend small">
+        <span><i class="sw bad"></i><span data-i18n="legend.failures">failures</span></span>
+        <span><i class="sw gw"></i><span data-i18n="legend.gw_rtt">router RTT</span></span>
+        <span><i class="sw net"></i><span data-i18n="legend.net_rtt">internet RTT</span></span>
+        <span><i class="sw sig"></i><span data-i18n="legend.signal">Wi-Fi signal</span></span>
+        <span><i class="sw busy"></i><span data-i18n="legend.busy">channel busy</span></span>
+      </div>
+      <div id="now-tl-info" class="tl-info small" aria-live="polite" data-i18n="live.tl_hint">Point at the timeline to inspect a minute.</div>
+    </section>
+
     <section class="card-sec" aria-labelledby="h-recent">
       <div class="sec-head">
         <div class="title-row"><h2 id="h-recent" data-i18n="now.recent">Recent incidents</h2><span id="now-inc-count" class="badge">0</span></div>
@@ -118,6 +137,10 @@
       </aside>
 
       <div class="sess-main">
+        <div class="sess-mobile-bar">
+          <button id="sess-back" class="ctrl" type="button" data-i18n="sess.back">← All sessions</button>
+        </div>
+
         <section id="compare-panel" class="card-sec" aria-labelledby="h-compare-res" hidden>
           <div class="sec-head">
             <h2 id="h-compare-res" data-i18n="cmp.title">Comparison</h2>
@@ -126,6 +149,14 @@
               <button id="cmp-close" class="ctrl" type="button" data-i18n="cmp.close">Close</button>
             </div>
           </div>
+          <details class="disc cmp-adv" id="cmp-adv">
+            <summary data-i18n="cmp.advanced">Advanced</summary>
+            <div class="cmp-tol-row">
+              <label class="cmp-tol-lbl" for="cmp-tol" data-i18n="cmp.tolerance">Time tolerance (s)</label>
+              <input id="cmp-tol" class="ctrl cmp-tol-inp" type="number" min="0" max="60" step="1" value="2">
+              <button id="cmp-apply" class="ctrl" type="button" data-i18n="cmp.apply">Apply</button>
+            </div>
+          </details>
           <div id="compare-body"></div>
         </section>
 
@@ -140,6 +171,7 @@
               <div id="export-menu" class="menu menu-sm" hidden>
                 <a id="report-export-md" class="menu-item" href="/api/report/export?format=md" download data-i18n="report.export_md">Report (Markdown)</a>
                 <a id="report-export-json" class="menu-item" href="/api/report/export?format=json" download data-i18n="report.export_json">Report (JSON)</a>
+                <p id="report-export-note" class="small muted menu-note" hidden data-i18n="report.export_wait">Available after 60 s of data.</p>
               </div>
             </div>
           </div>
@@ -159,6 +191,10 @@
               <button type="button" data-h="72">72 h</button>
             </div>
           </div>
+          <div id="tl-zoom-bar" class="tl-zoom-bar small" hidden>
+            <span id="tl-zoom-label" class="muted"></span>
+            <button id="tl-zoom-reset" class="ctrl" type="button" data-i18n="tl.zoom_reset">Reset zoom</button>
+          </div>
           <div id="timelines"></div>
           <div class="legend small">
             <span><i class="sw bad"></i><span data-i18n="legend.failures">failures</span></span>
@@ -168,7 +204,7 @@
             <span><i class="sw busy"></i><span data-i18n="legend.busy">channel busy</span></span>
             <span><i class="sw lan"></i><span data-i18n="legend.lan">LAN devices</span></span>
           </div>
-          <div id="tl-info" class="tl-info small" data-i18n="live.tl_hint">Point at the timeline to inspect a minute.</div>
+          <div id="tl-info" class="tl-info small" aria-live="polite" data-i18n="live.tl_hint">Point at the timeline to inspect a minute.</div>
           <div id="hourly-wrap" class="hourly-wrap" hidden>
             <div class="sub-row">
               <h3 class="sub" data-i18n="report.hourly">Hourly loss profile</h3>

@@ -9,8 +9,15 @@ import { type MsgKey, t, tMsg } from "./i18n.js";
 import { pointLabel } from "./points.js";
 import { LIVE, bus, state } from "./state.js";
 import { availTone } from "./status.js";
+import { errorState } from "./ui.js";
 
 const MAX_COMPARE = 8;
+
+/** Controls list vs detail view on mobile/tablet (< 960 px). */
+export function setSessionDetailOpen(open: boolean): void {
+  const layout = byId("tab-sessions").querySelector(".sess-layout");
+  if (layout) layout.classList.toggle("sess-detail-open", open);
+}
 
 function toggleCompare(id: string, on: boolean): void {
   const sel = state.compareSel.filter((x) => x !== id);
@@ -79,7 +86,7 @@ export function renderSessionList(): void {
     rows.push(item(s.id, title, sub, facts, s.id));
   }
   // A session that disappeared (deleted, or hidden because it is too short) is unselected.
-  if (state.selectedSession !== LIVE && !state.sessions.some((s) => s.id === state.selectedSession)) {
+  if (state.sessionsLoaded && state.selectedSession !== LIVE && !state.sessions.some((s) => s.id === state.selectedSession)) {
     state.selectedSession = LIVE;
   }
   state.compareSel = state.compareSel.filter((id) => state.sessions.some((s) => s.id === id));
@@ -88,10 +95,12 @@ export function renderSessionList(): void {
 }
 
 export function selectSession(id: string): void {
+  setSessionDetailOpen(true);
   if (state.selectedSession === id) return;
   state.selectedSession = id;
   state.rangeUserSet = true;
   state.highlightTs = null;
+  state.brushRange = null;
   renderSessionList();
   bus.dispatchEvent(new Event("session-selected"));
 }
@@ -151,18 +160,29 @@ function renderCompare(rep: CompareReport): void {
   body.replaceChildren(...parts.filter((x): x is HTMLElement => x !== null));
 }
 
+function readTolerance(): number {
+  const inp = byId("cmp-tol", HTMLInputElement);
+  const raw = Number(inp.value);
+  const clamped = isFinite(raw) ? Math.min(60, Math.max(0, Math.round(raw))) : 2;
+  inp.value = String(clamped);
+  state.compareTol = clamped;
+  return clamped;
+}
+
 async function runCompare(): Promise<void> {
   const ids = [...state.compareSel];
   if (ids.length < 2) return;
+  setSessionDetailOpen(true);
+  const tol = readTolerance();
   const panel = byId("compare-panel");
   panel.hidden = false;
-  byId("cmp-export", HTMLAnchorElement).href = compareUrl(ids, "md");
+  byId("cmp-export", HTMLAnchorElement).href = compareUrl(ids, "md", tol);
   byId("compare-body").replaceChildren(el("div", { class: "empty", text: t("cmp.loading") }));
   panel.scrollIntoView({ behavior: "smooth", block: "start" });
-  const r = await fetchCompare(ids);
+  const r = await fetchCompare(ids, tol);
   state.compare = r;
   if (r) renderCompare(r);
-  else byId("compare-body").replaceChildren(el("div", { class: "msg bad small", text: t("cmp.failed") }));
+  else byId("compare-body").replaceChildren(errorState(t("cmp.failed"), () => void runCompare()));
 }
 
 /** Re-draws the open comparison (after a language change). */
@@ -173,4 +193,15 @@ export function refreshCompare(): void {
 export function initSessions(): void {
   byId("cmp-btn").addEventListener("click", () => void runCompare());
   byId("cmp-close").addEventListener("click", () => { byId("compare-panel").hidden = true; });
+  byId("cmp-apply").addEventListener("click", () => void runCompare());
+  byId("cmp-tol", HTMLInputElement).addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      void runCompare();
+    }
+  });
+  byId("sess-back").addEventListener("click", () => {
+    setSessionDetailOpen(false);
+    window.scrollTo({ top: 0 });
+  });
 }

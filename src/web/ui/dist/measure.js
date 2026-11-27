@@ -7,6 +7,7 @@ import { t } from "./i18n.js";
 import { fmtHours, pointLabel, progressText, sessionList, sessionsText, statusChip } from "./points.js";
 import { focusPoint, renderSite } from "./site.js";
 import { bus, state } from "./state.js";
+import { wireDialog } from "./ui.js";
 /** Free-text point ids without a site file (same rule as the server). */
 const FREE_POINT = /^[A-Za-z0-9 _./-]{1,64}$/;
 function message(id, text, tone) {
@@ -104,6 +105,7 @@ function chosen() {
     return body;
 }
 let pending = null;
+let measDlg = null;
 function setStep(confirm) {
     byId("meas-confirm").hidden = !confirm;
     byId("meas-start").hidden = confirm;
@@ -129,7 +131,6 @@ function showConfirm(body) {
 export function openMeasureDialog(point) {
     if (!state.control?.enabled)
         return;
-    const dlg = byId("meas-dialog", HTMLDialogElement);
     pending = null;
     setStep(false);
     message("meas-dlg-msg", "", "info");
@@ -144,15 +145,11 @@ export function openMeasureDialog(point) {
             byId("meas-point-text", HTMLInputElement).value = point;
         }
     }
-    if (!dlg.open)
-        dlg.showModal();
-    (state.control.site ? byId("meas-point") : byId("meas-point-text")).focus();
+    measDlg?.open(state.control.site ? byId("meas-point") : byId("meas-point-text"));
 }
 function closeDialog() {
-    const dlg = byId("meas-dialog", HTMLDialogElement);
     pending = null;
-    if (dlg.open)
-        dlg.close();
+    measDlg?.close();
 }
 async function confirmSwitch() {
     const body = pending;
@@ -179,6 +176,7 @@ async function confirmSwitch() {
     }
 }
 export function initMeasure() {
+    measDlg = wireDialog(byId("meas-dialog", HTMLDialogElement), () => { pending = null; setStep(false); });
     // Enter in a field moves to the confirmation step; it never submits the page.
     byId("meas-form", HTMLFormElement).addEventListener("submit", (ev) => {
         ev.preventDefault();
@@ -208,7 +206,6 @@ export function initMeasure() {
         }
         closeDialog();
     });
-    byId("meas-dialog").addEventListener("close", () => { pending = null; setStep(false); });
     bus.addEventListener("pick-point", (ev) => {
         if (!(ev instanceof CustomEvent) || typeof ev.detail !== "string")
             return;

@@ -303,13 +303,139 @@ function appendRfRay(svg, u) {
         text: "≈ " + rf.obstacle_loss_db.toFixed(0) + " dB",
     }));
 }
+let zoomUnitId = null;
+let zoomBox = null;
+function clampZoom(z, base) {
+    const w = Math.max(base.w / 4, Math.min(base.w, z.w));
+    const h = Math.max(base.h / 4, Math.min(base.h, z.h));
+    const x = Math.max(base.x, Math.min(base.x + base.w - w, z.x));
+    const y = Math.max(base.y, Math.min(base.y + base.h - h, z.y));
+    return { x, y, w, h };
+}
+const isZoomed = (z, base) => z.w < base.w - 1e-3;
+const boxStr = (z) => [z.x, z.y, z.w, z.h].map((v) => v.toFixed(3)).join(" ");
+function wireMapPanZoom(svg, base, fitBtn) {
+    const applyZoom = (next) => {
+        const clamped = next ? clampZoom(next, base) : null;
+        zoomBox = clamped && isZoomed(clamped, base) ? clamped : null;
+        const cur = zoomBox ?? base;
+        svg.setAttribute("viewBox", boxStr(cur));
+        const zoomed = zoomBox !== null;
+        svg.classList.toggle("zoomed", zoomed);
+        fitBtn.disabled = !zoomed;
+    };
+    const stepZoom = (factor, fx = 0.5, fy = 0.5) => {
+        const cur = zoomBox ?? base;
+        const nw = cur.w * factor;
+        const nh = cur.h * factor;
+        if (nw >= base.w - 1e-3) {
+            applyZoom(null);
+            return;
+        }
+        const ax = cur.x + cur.w * fx;
+        const ay = cur.y + cur.h * fy;
+        applyZoom({ x: ax - nw * fx, y: ay - nh * fy, w: nw, h: nh });
+    };
+    const pointers = new Map();
+    let panAnchor = null;
+    let pinchDist = 0;
+    let suppressClick = false;
+    svg.addEventListener("click", (ev) => {
+        if (suppressClick) {
+            suppressClick = false;
+            ev.stopPropagation();
+            ev.preventDefault();
+        }
+    }, true);
+    svg.addEventListener("pointerdown", (ev) => {
+        if (ev.button !== 0 && ev.pointerType === "mouse")
+            return;
+        pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+        if (pointers.size === 2) {
+            const pts = [...pointers.values()];
+            if (pts[0] && pts[1])
+                pinchDist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+            panAnchor = null;
+        }
+        else if (pointers.size === 1 && zoomBox) {
+            panAnchor = { x: ev.clientX, y: ev.clientY, box: zoomBox, moved: false };
+        }
+    });
+    svg.addEventListener("pointermove", (ev) => {
+        if (!pointers.has(ev.pointerId))
+            return;
+        pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+        const rect = svg.getBoundingClientRect();
+        if (!rect.width || !rect.height)
+            return;
+        if (pointers.size === 2 && pinchDist > 0) {
+            const pts = [...pointers.values()];
+            const p0 = pts[0], p1 = pts[1];
+            if (!p0 || !p1)
+                return;
+            const d = Math.hypot(p1.x - p0.x, p1.y - p0.y);
+            if (d > 4) {
+                const fx = ((p0.x + p1.x) / 2 - rect.left) / rect.width;
+                const fy = ((p0.y + p1.y) / 2 - rect.top) / rect.height;
+                stepZoom(pinchDist / d, Math.max(0, Math.min(1, fx)), Math.max(0, Math.min(1, fy)));
+                pinchDist = d;
+                suppressClick = true;
+            }
+            return;
+        }
+        if (panAnchor && zoomBox) {
+            const dx = ev.clientX - panAnchor.x;
+            const dy = ev.clientY - panAnchor.y;
+            if (!panAnchor.moved && Math.hypot(dx, dy) >= 6) {
+                panAnchor.moved = true;
+                suppressClick = true;
+                svg.classList.add("panning");
+            }
+            if (panAnchor.moved) {
+                applyZoom({
+                    x: panAnchor.box.x - (dx / rect.width) * panAnchor.box.w,
+                    y: panAnchor.box.y - (dy / rect.height) * panAnchor.box.h,
+                    w: panAnchor.box.w,
+                    h: panAnchor.box.h,
+                });
+            }
+        }
+    });
+    const endPointer = (ev) => {
+        pointers.delete(ev.pointerId);
+        if (pointers.size < 2)
+            pinchDist = 0;
+        if (pointers.size === 0) {
+            panAnchor = null;
+            svg.classList.remove("panning");
+        }
+    };
+    svg.addEventListener("pointerup", endPointer);
+    svg.addEventListener("pointercancel", endPointer);
+    svg.addEventListener("wheel", (ev) => {
+        if (!ev.ctrlKey && !zoomBox)
+            return;
+        ev.preventDefault();
+        const rect = svg.getBoundingClientRect();
+        const fx = rect.width ? (ev.clientX - rect.left) / rect.width : 0.5;
+        const fy = rect.height ? (ev.clientY - rect.top) / rect.height : 0.5;
+        stepZoom(ev.deltaY < 0 ? 0.82 : 1 / 0.82, Math.max(0, Math.min(1, fx)), Math.max(0, Math.min(1, fy)));
+    }, { passive: false });
+    applyZoom(zoomBox);
+    return { applyZoom, stepZoom };
+}
 /** The selected flat in detail. */
 function renderUnit(b, u, floor) {
     const liveMap = liveBssidMap();
     const pad = 0.45, top = 0.35;
+    const base = { x: u.x - pad, y: u.y - top, w: u.width_m + 2 * pad, h: u.depth_m + top + pad };
+    if (zoomUnitId !== u.full_id) {
+        zoomUnitId = u.full_id;
+        zoomBox = null;
+    }
     const svg = sv("svg", {
         class: "plan",
-        viewBox: [u.x - pad, u.y - top, u.width_m + 2 * pad, u.depth_m + top + pad].join(" "),
+        viewBox: boxStr(zoomBox ?? base),
         role: "group",
         "aria-label": b.name + ", " + u.label + ", " + floorName(floor),
     });
@@ -383,7 +509,13 @@ function renderUnit(b, u, floor) {
     }
     appendRfRay(svg, u);
     const title = b.name + " · " + u.label + " · " + floorName(floor);
-    byId("site").replaceChildren(el("div", { class: "floor" }, el("div", { class: "floor-title", text: title }), svg));
+    const fitBtn = el("button", { type: "button", text: t("map.zoom_fit"), "aria-label": t("map.zoom_fit") });
+    const zoomCtl = wireMapPanZoom(svg, base, fitBtn);
+    const outBtn = el("button", { type: "button", text: "\u2212", "aria-label": t("map.zoom_out"), onclick: () => zoomCtl.stepZoom(1 / 0.75) });
+    fitBtn.addEventListener("click", () => zoomCtl.applyZoom(null));
+    const inBtn = el("button", { type: "button", text: "+", "aria-label": t("map.zoom_in"), onclick: () => zoomCtl.stepZoom(0.75) });
+    const head = el("div", { class: "floor-head" }, el("span", { class: "floor-title", text: title }), el("div", { class: "seg map-zoom", role: "group", "aria-label": t("map.zoom_fit") }, outBtn, fitBtn, inBtn));
+    byId("site").replaceChildren(el("div", { class: "floor" }, head, svg));
 }
 export function renderSite() {
     const site = state.site;
@@ -536,6 +668,7 @@ export async function loadSessions() {
     const r = await fetchSessions();
     if (r) {
         state.sessions = r.sessions;
+        state.sessionsLoaded = true;
         renderSessionList();
         if (state.site)
             renderSite();

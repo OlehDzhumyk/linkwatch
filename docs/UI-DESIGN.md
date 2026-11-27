@@ -1,11 +1,8 @@
 # linkwatch web UI: design specification
 
-Status: **mostly implemented** (stage 2, 27.11.2026; review fixes 27.11). The owner accepted D1–D9.
+Status: **stage 2 complete + stage 3 interactions implemented** (27.11.2026). The owner accepted D1–D9 and §11.6a.
 
-Not done yet (open items from the review): the 1-hour timeline on Now, `#sessions/<id>` URLs,
-phone list → report with a Back button, a tolerance control for compare, chart value bubbles
-and ←/→ keys, `src/web/ui/src/ui/` component folder (only `ui.ts` so far), contrast and i18n
-checks in `npm run check`.
+Remaining from §11.7: item 5 (visual site layout editor with snapping), deferred as its own module. Shared UI primitives (`kv`, `emptyState`, `errorState`, disclosure persistence, accessible `wireDialog`) live in `src/web/ui/src/ui.ts` because modules under `src/web/ui/src/` are kept flat so `/js/:name` serves them without a bundler.
 
 Differences from the draft:
 

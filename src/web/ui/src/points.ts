@@ -90,6 +90,7 @@ export function viewSession(id: string): void {
   state.selectedSession = id;
   state.rangeUserSet = true;
   state.highlightTs = null;
+  state.brushRange = null;
   bus.dispatchEvent(new CustomEvent("switch-tab", { detail: "sessions" }));
   bus.dispatchEvent(new Event("session-selected"));
 }

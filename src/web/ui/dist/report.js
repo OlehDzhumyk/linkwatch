@@ -2,12 +2,13 @@
 // and the per-point table of the Map view. Also the shared incident row and verdict sentence.
 import { fetchReport } from "./client.js";
 import { byId, el } from "./dom.js";
-import { fmtDur, fmtTime, fmtTimeShort, ms, stateLabel, verdictLabel } from "./format.js";
+import { fmtDur, fmtTime, fmtTimeShort, ms, secsSince, stateLabel, verdictLabel } from "./format.js";
 import { t, tDyn, tMsg } from "./i18n.js";
 import { availTone, dropsTone, pointLabel, progressText, statusChip } from "./points.js";
 import { LIVE, bus, state } from "./state.js";
 import { incidentsTone, sigTone } from "./status.js";
 import { tip } from "./tips.js";
+import { emptyState, errorState } from "./ui.js";
 const HOURS = Array.from({ length: 24 }, (_, h) => h);
 /** Translated verdict sentence of a report (server code + args), English text as fallback. */
 export function verdictSentence(rep) {
@@ -33,7 +34,7 @@ const scrollTo = (id) => () => byId(id).scrollIntoView({ behavior: "smooth", blo
 function renderKpis(rep) {
     const box = byId("report-kpis");
     if (!rep.ifaces.length) {
-        box.replaceChildren(el("div", { class: "empty-state" }, el("strong", { text: t("report.no_data") }), el("span", { text: t("report.no_data_hint") })));
+        box.replaceChildren(emptyState(t("report.no_data"), t("report.no_data_hint")));
         return;
     }
     const net = worstIface(rep.ifaces);
@@ -113,12 +114,25 @@ export function episodeRow(ep, withContext = true, live = false) {
 }
 function renderIncidents(rep) {
     const list = byId("incidents");
-    byId("inc-count").textContent = String(rep.episodes.length);
-    if (!rep.episodes.length) {
+    const br = state.brushRange;
+    const shown = br
+        ? rep.episodes.filter((e) => {
+            const s = new Date(e.start).getTime();
+            const end = s + e.duration_s * 1000;
+            return isFinite(s) && s <= br[1] && end >= br[0];
+        })
+        : rep.episodes;
+    byId("inc-count").textContent = br ? `${shown.length} / ${rep.episodes.length}` : String(rep.episodes.length);
+    if (!shown.length) {
         list.replaceChildren(el("li", { class: "empty small", text: t("report.inc_empty") }));
         return;
     }
-    list.replaceChildren(...rep.episodes.slice(0, 60).map((e) => episodeRow(e)));
+    list.replaceChildren(...shown.slice(0, 60).map((e) => episodeRow(e)));
+}
+/** Updates the incidents list for the active brush zoom range. */
+export function renderIncidentsForCurrentReport() {
+    if (state.report)
+        renderIncidents(state.report);
 }
 function renderFindings(rep) {
     const box = byId("report-findings");
@@ -149,13 +163,25 @@ function sessionTitle() {
     };
 }
 export function renderReport() {
+    const rep = state.report;
     const sessQ = state.selectedSession === LIVE ? "" : "&session=" + encodeURIComponent(state.selectedSession);
-    byId("report-export-md", HTMLAnchorElement).href = "/api/report/export?format=md" + sessQ;
-    byId("report-export-json", HTMLAnchorElement).href = "/api/report/export?format=json" + sessQ;
+    const startedS = state.status?.started ? secsSince(state.status.started) : 0;
+    const maxTicks = rep ? rep.ifaces.reduce((m, i) => Math.max(m, i.ticks), 0) : 0;
+    const tooShort = state.selectedSession === LIVE && startedS < 60 && maxTicks < 60;
+    const mdLink = byId("report-export-md", HTMLAnchorElement);
+    const jsonLink = byId("report-export-json", HTMLAnchorElement);
+    mdLink.href = "/api/report/export?format=md" + sessQ;
+    jsonLink.href = "/api/report/export?format=json" + sessQ;
+    for (const link of [mdLink, jsonLink]) {
+        if (tooShort)
+            link.setAttribute("aria-disabled", "true");
+        else
+            link.removeAttribute("aria-disabled");
+    }
+    byId("report-export-note").hidden = !tooShort;
     const { title, sub } = sessionTitle();
     byId("h-report").textContent = title;
     byId("rep-sub").textContent = sub;
-    const rep = state.report;
     const vEl = byId("rep-verdict");
     if (!rep) {
         vEl.hidden = true;
@@ -176,9 +202,7 @@ export function renderReport() {
 }
 /** The report request failed: say so and offer a retry, instead of "Analysing…" forever. */
 function reportFailed() {
-    const retry = el("button", { type: "button", class: "ctrl", text: t("err.retry"), onclick: () => void loadReport() });
-    const box = el("div", { class: "msg bad small" }, t("err.report"), " ", retry);
-    byId("report-kpis").replaceChildren(box);
+    byId("report-kpis").replaceChildren(errorState(t("err.report"), () => void loadReport()));
     byId("incidents").replaceChildren(el("li", { class: "empty small", text: t("err.report") }));
 }
 export async function loadReport() {
