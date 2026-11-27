@@ -42,7 +42,9 @@ const WALL_LOSS: { readonly [M in WallMaterial]: MsgKey } = {
 
 /** Floor name: "Ground floor" for 0, else "Floor n". */
 function floorName(n: number): string {
-  return n === 0 ? t("map.ground") : t("map.floor_n", { n });
+  // `n` counts from 0 (ground). EN says "Ground floor", "Floor 1"; UK counts from 1, so
+  // locales get both numbers (`n` and `n1`).
+  return n === 0 ? t("map.ground") : t("map.floor_n", { n, n1: n + 1 });
 }
 
 /** Crossing point of segments a–b and c–d, or null. */
@@ -312,12 +314,25 @@ function appendRfRay(svg: SVGSVGElement, u: UnitView): void {
   if (!router) return;
   const a = router.at;
   const b = room.centroid;
+  // The ray goes under the room names (inserted before the first label), the wall marks and
+  // the dB label on top. The label sits next to the router, away from the room text.
   svg.append(sv("line", { x1: a[0], y1: a[1], x2: b[0], y2: b[1], class: "rf-ray" }));
+  // Room names go back on top of the ray (they have a halo, so the line passes under them).
+  for (const tx of svg.querySelectorAll("text.room-name, text.room-sub")) svg.append(tx);
   for (const w of u.walls) {
     const hit = segHit(a, b, w.from, w.to);
     if (hit) svg.append(sv("circle", { cx: hit[0], cy: hit[1], r: 0.11, class: "rf-hit" }));
   }
-  svg.append(sv("text", { x: (a[0] + b[0]) / 2, y: (a[1] + b[1]) / 2 - 0.25, class: "rf-lbl", text: "≈ " + rf.obstacle_loss_db.toFixed(0) + " dB" }));
+  const len = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+  const k = Math.min(0.9, 1.4 / len);
+  const nx = -(b[1] - a[1]) / len;
+  const ny = (b[0] - a[0]) / len;
+  svg.append(sv("text", {
+    x: a[0] + (b[0] - a[0]) * k + nx * 0.35,
+    y: a[1] + (b[1] - a[1]) * k + ny * 0.35,
+    class: "rf-lbl",
+    text: "≈ " + rf.obstacle_loss_db.toFixed(0) + " dB",
+  }));
 }
 
 /** The selected flat in detail. */
@@ -509,7 +524,12 @@ function selectPoint(id: string, name: string, pt: PointView | null, area: AreaV
 }
 
 /** Shows a point on the map (from the plan list or vertical stack): its building, flat and sessions. */
-export function focusPoint(point: string): boolean {
+/** Re-draws the selected point's details (after a language change). */
+export function refreshSelection(): void {
+  if (state.selected) focusPoint(state.selected, false);
+}
+
+export function focusPoint(point: string, scroll = true): boolean {
   const site = state.site;
   const where = unitOf(point);
   if (!site || !where) return false;
@@ -521,7 +541,7 @@ export function focusPoint(point: string): boolean {
   const room = u.rooms.find((r) => r.full_id === point) ?? null;
   const pt = u.points.find((p) => p.full_id === point) ?? null;
   selectPoint(point, room?.name ?? pt?.name ?? point, pt, room);
-  if (window.innerWidth < 1020) byId("site-panel").scrollIntoView({ behavior: "smooth", block: "start" });
+  if (scroll && window.innerWidth < 960) byId("site-panel").scrollIntoView({ behavior: "smooth", block: "start" });
   return true;
 }
 

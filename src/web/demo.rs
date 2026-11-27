@@ -127,7 +127,7 @@ async fn demo_ui_server() {
     let past = [
         ("s1", pt("B1/F2/K", "Living room"), 52, 9.0, Some(demo_summary(99.95, "all_ok", 2)), "Night 1", None),
         ("s2", pt("B1/F2/R1", "Office desk"), 40, 3.0, Some(demo_summary(98.4, "wifi_problem", 36)), "Night 2", Some("window open")),
-        ("s3", pt("B2/F1/R2", "Hall"), 30, 5.0, Some(demo_summary(99.5, "isp_problem", 8)), "Neighbour test", None),
+        ("s3", pt("B2/F1/R2", "Hall"), 30, 5.0, Some(demo_summary(99.5, "line_problem", 8)), "Neighbour test", None),
         ("s4", pt("B1/F2/R2", "Kitchen"), 20, 0.01, None, "Wrong room", None),
     ];
     for (id, point, ago_h, dur_h, summary, label, note) in past {

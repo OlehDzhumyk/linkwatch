@@ -1,11 +1,12 @@
 // Conditional alert banner, System tab (host, session, router, LAN sweep, observer/security events).
 
-import { byId, el } from "./dom.js";
+import { byId, el, patch } from "./dom.js";
 import { fillEventList, makeEventItem } from "./events.js";
 import { fmtDur, fmtTime, secsSince } from "./format.js";
 import { t } from "./i18n.js";
 import { bus, state } from "./state.js";
-import { type TipKey, tip } from "./tips.js";
+import { kv } from "./ui.js";
+import { maskedMac } from "./wifi.js";
 
 interface AlertItem {
   tone: "warn" | "bad";
@@ -57,7 +58,7 @@ export function renderAlertBar(): void {
   const hasBad = alerts.some((a) => a.tone === "bad");
   bar.hidden = false;
   bar.className = "alert-bar small " + (hasBad ? "bad" : "warn");
-  bar.replaceChildren(
+  patch(bar,
     el("span", { class: "muted small", text: t("alert.attention") }),
     ...alerts.map((a) => el("span", { class: "host-chip " + a.tone, text: a.text })),
     el("button", {
@@ -70,23 +71,17 @@ export function renderAlertBar(): void {
   dot.className = "tab-dot" + (hasBad ? " bad" : "");
 }
 
-function kv(dl: HTMLDListElement, k: string, v: string, cls?: string, tkey?: TipKey): void {
-  dl.append(
-    tkey ? el("dt", { class: "tip-dt" }, k, tip(tkey)) : el("dt", { text: k }),
-    el("dd", { text: v, class: cls }),
-  );
-}
 
 function renderHostSection(): void {
-  const dl = byId("sys-host", HTMLDListElement);
+  const target = byId("sys-host", HTMLDListElement);
   const s = state.status;
   if (!s) {
-    dl.replaceChildren();
+    target.replaceChildren();
     return;
   }
   const m = s.session;
   const h = s.host;
-  dl.replaceChildren();
+  const dl = el("dl");
   if (m?.host) kv(dl, t("k.host"), m.host);
   if (m?.version) kv(dl, t("k.version"), "linkwatch " + m.version);
   if (m?.session) kv(dl, t("k.session"), m.session);
@@ -122,9 +117,10 @@ function renderHostSection(): void {
   if (net) {
     if (net.subnet) kv(dl, t("k.subnet"), net.subnet);
     if (net.gateway_ip) kv(dl, t("k.gateway_ip"), net.gateway_ip);
-    if (net.gateway_mac) kv(dl, t("k.gateway_mac"), net.gateway_mac);
+    if (net.gateway_mac) kv(dl, t("k.gateway_mac"), maskedMac(net.gateway_mac));
     if (net.bssids?.length) kv(dl, t("k.known_bssids"), String(net.bssids.length));
   }
+  patch(target, ...dl.childNodes);
 }
 
 function renderRouterSection(): void {
@@ -159,7 +155,7 @@ function renderRouterSection(): void {
     box.replaceChildren(el("div", { class: "empty small", text: t("sys.upnp_wait") }));
     return;
   }
-  box.replaceChildren(dl);
+  patch(box, dl);
 }
 
 function renderLanSection(): void {
@@ -175,7 +171,7 @@ function renderLanSection(): void {
   kv(dl, t("k.ping_alive"), String(lan.ping_alive));
   kv(dl, t("k.unique_seen_session"), String(lan.unique_seen));
   kv(dl, t("k.hosts_probed"), String(lan.probed));
-  box.replaceChildren(dl);
+  patch(box, dl);
 }
 
 export function renderSystemEvents(): void {

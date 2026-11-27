@@ -134,6 +134,11 @@ async function runCompare() {
     else
         byId("compare-body").replaceChildren(el("div", { class: "msg bad small", text: t("cmp.failed") }));
 }
+/** Re-draws the open comparison (after a language change). */
+export function refreshCompare() {
+    if (state.compare && !byId("compare-panel").hidden)
+        renderCompare(state.compare);
+}
 export function initSessions() {
     byId("cmp-btn").addEventListener("click", () => void runCompare());
     byId("cmp-close").addEventListener("click", () => { byId("compare-panel").hidden = true; });

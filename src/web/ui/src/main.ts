@@ -9,8 +9,8 @@ import { connect, loadStatus, syncRangeButtons } from "./live.js";
 import { initMeasure, loadControl, loadPlan, openMeasureDialog, renderMeasure, renderMeasureCurrent, renderPlan } from "./measure.js";
 import { renderNow, renderNowIncidents, renderNowMeasure } from "./now.js";
 import { loadLiveReport, loadReport, renderPointsCompare, renderReport } from "./report.js";
-import { initSessions, renderSessionList } from "./sessions.js";
-import { focusPoint, initSiteControls, loadSessions, loadSite, renderSite } from "./site.js";
+import { initSessions, refreshCompare, renderSessionList } from "./sessions.js";
+import { focusPoint, initSiteControls, loadSessions, loadSite, refreshSelection, renderSite } from "./site.js";
 import { EVENT_FILTERS, LIVE, SCAN_FILTERS, TABS, THEMES, type Tab, type Theme, bus, oneOf, state } from "./state.js";
 import { renderAlertBar, renderSystem } from "./system.js";
 import { focusTimestamp, loadMinutes, renderTimelines } from "./timeline.js";
@@ -178,6 +178,9 @@ function initControls(): void {
     renderEvents();
     renderMeasure();
     renderSessionList();
+    refreshCompare();
+    refreshSelection();
+    renderReport();
     redrawActiveTab();
   });
   initTabs();
@@ -187,7 +190,7 @@ function initControls(): void {
     setTab("map");
     if (p) requestAnimationFrame(() => focusPoint(p));
   });
-  byId("switch-pt-btn").addEventListener("click", () => { setTab("map"); openMeasureDialog(); });
+  byId("switch-pt-btn").addEventListener("click", () => openMeasureDialog());
 
   for (const chip of byId("diag-nav").querySelectorAll<HTMLButtonElement>("button[data-target]")) {
     chip.addEventListener("click", () => {

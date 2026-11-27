@@ -1,11 +1,13 @@
 // Network path topology, neighbour networks and channel spectrum.
 import { fetchScan } from "./client.js";
-import { byId, cssVar, el, prepareCanvas } from "./dom.js";
+import { byId, cssVar, el, patch, prepareCanvas } from "./dom.js";
 import { band, classifyBss, fmtDur, freqToChannel, ms, sigPct, stateLabel, } from "./format.js";
 import { renderSite } from "./site.js";
 import { state } from "./state.js";
 import { t } from "./i18n.js";
 import { tip } from "./tips.js";
+import { busyTone, sigTone } from "./status.js";
+import { kv } from "./ui.js";
 // ---------- path strip (Now view) ----------
 function routerRateText(r) {
     if (!r)
@@ -124,7 +126,7 @@ export function renderTopology() {
     const rtrTone = rtrBad ? "bad" : worst === "bad" && names.length === 1 ? "warn" : "ok";
     const netTone = net.cls === "ok" && dns.cls === "bad" ? "warn" : net.cls;
     const netSub = [net.rtt !== null ? ms(net.rtt) : null, dns.cls === "bad" ? t("now.dns_fail_short") : null].filter(Boolean).join(" · ");
-    box.replaceChildren(el("div", { class: "hop" }, hopBox(hostTone, s.session?.host || t("now.this_device"), hostSub || null), edge(worst)), el("div", { class: "hop" }, el("div", { class: "hop-links", role: "listitem" }, ...tags), edge(worst)), el("div", { class: "hop" }, hopBox(rtrTone, t("now.router"), gwIp), edge(isp.cls)), el("div", { class: "hop" }, hopBox(isp.cls, t("now.provider"), s.isp_hop ? (isp.rtt !== null ? ms(isp.rtt) : s.isp_hop) : t("now.discovering")), edge(netTone)), el("div", { class: "hop" }, hopBox(netTone, t("now.internet"), netSub || null)));
+    patch(box, el("div", { class: "hop" }, hopBox(hostTone, s.session?.host || t("now.this_device"), hostSub || null), edge(worst)), el("div", { class: "hop" }, el("div", { class: "hop-links", role: "listitem" }, ...tags), edge(worst)), el("div", { class: "hop" }, hopBox(rtrTone, t("now.router"), gwIp), edge(isp.cls)), el("div", { class: "hop" }, hopBox(isp.cls, t("now.provider"), s.isp_hop ? (isp.rtt !== null ? ms(isp.rtt) : s.isp_hop) : t("now.discovering")), edge(netTone)), el("div", { class: "hop" }, hopBox(netTone, t("now.internet"), netSub || null)));
 }
 const CENTER_CH_5GHZ_40 = {
     36: 38, 40: 38, 44: 46, 48: 46, 52: 54, 56: 54, 60: 62, 64: 62,
@@ -314,7 +316,7 @@ function renderSpectrum(allClassified) {
             bandName: "5 GHz",
             minCh: 30,
             maxCh: 170,
-            ticks: [36, 48, 52, 64, 100, 116, 132, 149, 165],
+            ticks: [36, 52, 64, 100, 116, 132, 149, 165],
             items: b5,
         });
     }
@@ -335,11 +337,27 @@ function renderSpectrum(allClassified) {
  * A MAC/BSSID shown as its last three octets (enough to tell radios apart, safer on a shared
  * screen); a click shows the full value.
  */
+/** Addresses the user chose to show in full (survives the live re-render). */
+const revealed = new Set();
 export function maskedMac(mac) {
     const parts = mac.split(":");
     const short = parts.length === 6 ? "…:" + parts.slice(3).join(":") : mac;
-    const b = el("button", { type: "button", class: "mac-btn mono small", text: short, "aria-label": t("wifi.reveal") });
-    b.addEventListener("click", () => { b.textContent = b.textContent === mac ? short : mac; });
+    const b = el("button", {
+        type: "button",
+        class: "mac-btn mono small",
+        "data-key": "mac:" + mac,
+        "aria-pressed": revealed.has(mac) ? "true" : "false",
+        text: revealed.has(mac) ? mac : short,
+        "aria-label": t("wifi.reveal"),
+    });
+    b.addEventListener("click", () => {
+        if (revealed.has(mac))
+            revealed.delete(mac);
+        else
+            revealed.add(mac);
+        b.textContent = revealed.has(mac) ? mac : short;
+        b.setAttribute("aria-pressed", revealed.has(mac) ? "true" : "false");
+    });
     return b;
 }
 const groupOrder = (m) => (m.group === "ours" ? 0 : m.group === "interfering" ? 1 : 2);
@@ -435,7 +453,7 @@ export function renderScan() {
         chips.push(el("span", { class: "host-chip warn", text: t("wifi.chip_adjacent", { n: adjCh }) }));
     sumBox.replaceChildren(...chips);
     renderSpectrum(allForSpec);
-    box.replaceChildren(...chunks);
+    patch(box, ...chunks);
 }
 export function renderWifiLink() {
     const box = byId("wifi-link");
@@ -449,9 +467,6 @@ export function renderWifiLink() {
         box.replaceChildren(el("div", { class: "empty small", text: t("wifi.no_ifaces") }));
         return;
     }
-    const kv = (dl, k, v, cls, tkey) => {
-        dl.append(tkey ? el("dt", { class: "tip-dt" }, k, tip(tkey)) : el("dt", { text: k }), el("dd", { text: v, class: cls }));
-    };
     const cards = wifiIfaces.map(([name, st]) => {
         const [lbl, tone] = stateLabel(st.state ?? st.last?.state);
         const w = st.wifi;
@@ -477,12 +492,12 @@ export function renderWifiLink() {
             const sig = w.signal_avg_dbm ?? w.signal_dbm;
             if (sig !== undefined) {
                 const sigText = sig + " dBm" + (w.signal_dbm !== undefined && w.signal_avg_dbm !== undefined && w.signal_dbm !== w.signal_avg_dbm ? " (" + t("wifi.inst", { v: w.signal_dbm }) + ")" : "");
-                dl.append(el("dt", { class: "tip-dt" }, t("now.signal"), tip("signal")), el("dd", { class: sig < -75 ? "err" : "" }, el("span", { class: "sig-cell" }, el("progress", { class: "sig-prog", max: 100, value: sigPct(sig) }), el("span", { text: sigText }))));
+                dl.append(el("dt", { class: "tip-dt" }, t("now.signal"), tip("signal")), el("dd", { class: sigTone(sig) === "bad" ? "err" : "" }, el("span", { class: "sig-cell" }, el("progress", { class: "sig-prog", max: 100, value: sigPct(sig) }), el("span", { text: sigText }))));
             }
             if (cl?.noise_dbm !== undefined)
                 kv(dl, t("wifi.noise"), cl.noise_dbm + " dBm");
             if (cl) {
-                kv(dl, t("now.busy"), cl.busy_pct.toFixed(1) + "% (rx " + cl.rx_pct.toFixed(1) + "% · tx " + cl.tx_pct.toFixed(1) + "%)", cl.busy_pct > 70 ? "err" : undefined, "channel_busy");
+                kv(dl, t("now.busy"), cl.busy_pct.toFixed(1) + "% (rx " + cl.rx_pct.toFixed(1) + "% · tx " + cl.tx_pct.toFixed(1) + "%)", busyTone(cl.busy_pct) === "bad" ? "err" : undefined, "channel_busy");
             }
             if (w.tx_bitrate_mbps !== undefined || w.rx_bitrate_mbps !== undefined) {
                 kv(dl, t("now.bitrate"), (w.tx_bitrate_mbps !== undefined ? Math.round(w.tx_bitrate_mbps) : "–") + " / " + (w.rx_bitrate_mbps !== undefined ? Math.round(w.rx_bitrate_mbps) : "–") + " Mbit/s");
@@ -504,7 +519,7 @@ export function renderWifiLink() {
             kv(dl, t("wifi.gateway"), st.last.link.gateway);
         return el("article", { class: "wifi-card" }, el("div", { class: "path-head" }, el("span", { class: "path-name" }, el("span", { class: "name", text: name })), el("span", { class: "pill small " + tone, text: lbl })), dl);
     });
-    box.replaceChildren(...cards);
+    patch(box, ...cards);
 }
 export async function loadScan() {
     const r = await fetchScan();

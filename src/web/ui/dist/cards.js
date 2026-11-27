@@ -1,11 +1,12 @@
 // App bar (context chip, verdict, menu facts) and the per-interface path rows of the Now view.
-import { byId, cssVar, el, prepareCanvas } from "./dom.js";
+import { byId, cssVar, el, patch, prepareCanvas } from "./dom.js";
 import { band, fmtDur, fmtTimeShort, ms, secsSince, sigPct, stateLabel, verdictLabel } from "./format.js";
 import { t } from "./i18n.js";
 import { pointLabel } from "./points.js";
 import { state } from "./state.js";
 import { busyTone, sigTone } from "./status.js";
 import { tip } from "./tips.js";
+import { kv } from "./ui.js";
 import { renderTopology } from "./wifi.js";
 /** Seconds kept in the per-interface sparkline. */
 const RING_SECS = 60;
@@ -41,9 +42,6 @@ export function renderHeader() {
             ? t("menu.control_on")
             : t("menu.read_only");
 }
-function kv(dl, k, v, cls, tkey) {
-    dl.append(tkey ? el("dt", { class: "tip-dt" }, k, tip(tkey)) : el("dt", { text: k }), el("dd", { text: v, class: cls }));
-}
 /** Adds one sample to the interface's sparkline ring. */
 export function recordSamplePoint(sample) {
     const name = sample.iface;
@@ -61,9 +59,18 @@ export function recordSamplePoint(sample) {
 }
 function drawSparkline(canvas, pts) {
     const cv = prepareCanvas(canvas);
-    if (!cv || !pts.length)
+    if (!cv)
         return;
     const { c, W, H } = cv;
+    if (pts.length < 2) {
+        // The ring fills from the live feed; say so instead of showing an empty box.
+        c.fillStyle = cssVar("--muted");
+        c.font = "12px " + cssVar("--sans");
+        c.textAlign = "center";
+        c.textBaseline = "middle";
+        c.fillText(t("now.spark_wait"), W / 2, H / 2);
+        return;
+    }
     const vals = [];
     for (const p of pts) {
         if (p.gw !== null)
@@ -132,7 +139,7 @@ function pathRow(name, i, sparks) {
         if (sig !== undefined)
             metrics.append(metric(t("now.signal"), "signal", sig + " dBm", sigTone(sig) === "bad" ? "err" : ""));
     }
-    const canvas = el("canvas", { class: "spark", role: "img", "aria-label": t("now.spark_aria", { iface: name }) });
+    const canvas = el("canvas", { class: "spark", role: "img", "data-iface": name, "aria-label": t("now.spark_aria", { iface: name }) });
     sparks.push([canvas, name]);
     const notes = [];
     if (i.state_since)
@@ -195,7 +202,7 @@ function pathRow(name, i, sparks) {
             }
         },
     }, el("summary", { text: t("now.details") }), moreDl);
-    return el("article", { class: "path " + cls }, el("div", { class: "path-head" }, el("span", { class: "path-name" }, el("span", { class: "name", text: name }), el("span", { class: "muted small", text: roleText(i.role) })), el("span", { class: "pill small " + cls, text: label })), metrics, canvas, notes.length ? el("div", { class: "path-note", text: notes.join(" · ") }) : null, more);
+    return el("article", { class: "path " + cls, "data-key": "path:" + name }, el("div", { class: "path-head" }, el("span", { class: "path-name" }, el("span", { class: "name", text: name }), el("span", { class: "muted small", text: roleText(i.role) })), el("span", { class: "pill small " + cls, text: label })), metrics, canvas, notes.length ? el("div", { class: "path-note", text: notes.join(" · ") }) : null, more);
 }
 export function renderCards() {
     const s = state.status;
@@ -213,7 +220,9 @@ export function renderCards() {
         const i = s.ifaces[name];
         return i ? [pathRow(name, i, sparks)] : [];
     });
-    box.replaceChildren(...rows);
-    for (const [cv, name] of sparks)
-        drawSparkline(cv, state.liveRing.get(name) ?? []);
+    // In place: focus, an open tip and open details survive the once-a-second update.
+    patch(box, ...rows);
+    for (const cv of box.querySelectorAll("canvas.spark[data-iface]")) {
+        drawSparkline(cv, state.liveRing.get(cv.dataset["iface"] ?? "") ?? []);
+    }
 }

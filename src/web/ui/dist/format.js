@@ -152,7 +152,8 @@ const PSTATE = {
 };
 function lookup(table, v) {
     const hit = v ? table[v] : undefined;
-    return hit ? [t(hit[0]), hit[1]] : [v || t("verdict.unknown"), "neutral"];
+    // A value this UI does not know (older or newer server) reads as "Unknown", not as a raw key.
+    return hit ? [t(hit[0]), hit[1]] : [t("verdict.unknown"), "neutral"];
 }
 /** Label of a verdict; also takes free-form strings (session summaries). */
 export const verdictLabel = (v) => lookup(VERDICT, v);

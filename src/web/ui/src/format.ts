@@ -190,7 +190,8 @@ const PSTATE: { readonly [K in PathState]: readonly [MsgKey, Tone] } = {
 
 function lookup(table: { readonly [k: string]: readonly [MsgKey, Tone] }, v: string | null | undefined): Label {
   const hit = v ? table[v] : undefined;
-  return hit ? [t(hit[0]), hit[1]] : [v || t("verdict.unknown"), "neutral"];
+  // A value this UI does not know (older or newer server) reads as "Unknown", not as a raw key.
+  return hit ? [t(hit[0]), hit[1]] : [t("verdict.unknown"), "neutral"];
 }
 
 /** Label of a verdict; also takes free-form strings (session summaries). */

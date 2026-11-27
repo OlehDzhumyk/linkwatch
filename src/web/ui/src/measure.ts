@@ -62,7 +62,7 @@ function fillPicker(): void {
           if (p.kind !== "probe" && p.kind !== "other") continue;
           opts.push(el("option", { value: p.full_id, text: p.name + " (" + t("map.point_kind") + ")" }));
         }
-        if (opts.length) groups.push(el("optgroup", { label: b.name + " › " + u.label + " (" + t("map.floor_n", { n: f.floor }) + ")" }, ...opts));
+        if (opts.length) groups.push(el("optgroup", { label: b.name + " › " + u.label + " (" + (f.floor === 0 ? t("map.ground") : t("map.floor_n", { n: f.floor, n1: f.floor + 1 })) + ")" }, ...opts));
       }
     }
   }

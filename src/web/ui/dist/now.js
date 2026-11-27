@@ -1,6 +1,6 @@
 // Now view: the verdict hero (one sentence + path strip), the current measurement and the
 // latest network incidents of the running session.
-import { byId, el } from "./dom.js";
+import { byId, el, patch } from "./dom.js";
 import { fmtDur, fmtTimeShort, secsSince, verdictLabel } from "./format.js";
 import { t, tDyn, tPlural } from "./i18n.js";
 import { planItem, pointLabel, progressText, statusChip } from "./points.js";
@@ -50,7 +50,7 @@ export function renderNowMeasure() {
     }
     if (c && !c.enabled)
         rows.push(el("div", { class: "small muted", text: t("now.read_only") }));
-    box.replaceChildren(el("div", { class: "meas-sum" }, ...rows));
+    patch(box, el("div", { class: "meas-sum" }, ...rows));
 }
 export function renderNowIncidents() {
     const list = byId("now-incidents");

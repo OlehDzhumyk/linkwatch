@@ -4,6 +4,7 @@ import { byId, el } from "./dom.js";
 import { fmtDur, fmtTime } from "./format.js";
 import { t, tDyn } from "./i18n.js";
 import { maskedMac } from "./wifi.js";
+import { kv } from "./ui.js";
 import { oneOf, state } from "./state.js";
 import { renderAlertBar } from "./system.js";
 import { tip } from "./tips.js";
@@ -22,11 +23,8 @@ function sevTone(sev) {
 function showMsg(id, text, tone) {
     const m = byId(id);
     m.textContent = text;
-    m.className = "meas-msg small " + tone;
+    m.className = "msg small " + tone;
     m.hidden = text === "";
-}
-function kvRow(dl, label, val) {
-    dl.append(el("dt", { text: label }), el("dd", null, val));
 }
 function renderAdviceItem(a) {
     const tone = sevTone(a.severity);
@@ -129,27 +127,27 @@ export function renderAudit() {
     pill.textContent = a.adapter_used === "none" ? t("sys.not_probed") : a.adapter_used;
     pill.className = "pill small " + (a.adapter_used === "none" ? "neutral" : "ok");
     kvBox.replaceChildren();
-    kvRow(kvBox, t("k.gateway_ip"), a.gateway_ip ?? "–");
+    kv(kvBox, t("k.gateway_ip"), a.gateway_ip ?? "–");
     if (a.gateway_mac)
-        kvRow(kvBox, t("k.gateway_mac"), maskedMac(a.gateway_mac));
+        kv(kvBox, t("k.gateway_mac"), maskedMac(a.gateway_mac));
     if (a.vendor)
-        kvRow(kvBox, t("k.vendor"), a.vendor);
+        kv(kvBox, t("k.vendor"), a.vendor);
     if (a.model)
-        kvRow(kvBox, t("k.model"), a.model);
+        kv(kvBox, t("k.model"), a.model);
     if (a.firmware)
-        kvRow(kvBox, t("k.firmware"), a.firmware);
+        kv(kvBox, t("k.firmware"), a.firmware);
     if (a.admin_url) {
         const safeUrl = a.admin_url.startsWith("http://") || a.admin_url.startsWith("https://");
-        kvRow(kvBox, t("k.admin_ui"), safeUrl
+        kv(kvBox, t("k.admin_ui"), safeUrl
             ? el("a", { class: "mono", href: a.admin_url, target: "_blank", rel: "noopener noreferrer", text: a.admin_url })
             : el("span", { class: "mono", text: a.admin_url }));
     }
     if (a.uptime_s !== null)
-        kvRow(kvBox, t("k.uptime"), fmtDur(a.uptime_s));
+        kv(kvBox, t("k.uptime"), fmtDur(a.uptime_s));
     if (a.adapter_used !== "none")
-        kvRow(kvBox, t("k.probed"), fmtTime(a.probed_at));
+        kv(kvBox, t("k.probed"), fmtTime(a.probed_at));
     for (const d of a.details)
-        kvRow(kvBox, d.label, d.value);
+        kv(kvBox, d.label, d.value);
     portsBox.replaceChildren(...(a.ports.length
         ? a.ports.map(renderPortChip)
         : [el("span", { class: "small muted", text: t("sys.ports_empty") })]));

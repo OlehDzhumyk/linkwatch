@@ -276,34 +276,6 @@
       </div>
     </details>
 
-    <dialog id="meas-dialog" class="dialog" aria-labelledby="meas-dlg-title">
-      <form id="meas-form" class="meas-form" method="dialog">
-        <h2 id="meas-dlg-title" data-i18n="map.start_here">Start a measurement</h2>
-        <label id="meas-point-wrap" class="fld"><span data-i18n="map.f_point">Point</span>
-          <select id="meas-point" class="inp"></select>
-        </label>
-        <label id="meas-text-wrap" class="fld" hidden><span data-i18n="map.f_point">Point</span>
-          <input id="meas-point-text" class="inp" list="meas-points" maxlength="64" autocomplete="off"
-            data-i18n-ph="map.ph_point" placeholder="e.g. Living room" pattern="[A-Za-z0-9 _./\-]{1,64}">
-          <datalist id="meas-points"></datalist>
-        </label>
-        <label class="fld"><span data-i18n="map.f_label">Label</span>
-          <input id="meas-label" class="inp" maxlength="200" autocomplete="off" data-i18n-ph="map.ph_label" placeholder="e.g. Night 4">
-        </label>
-        <label class="fld"><span data-i18n="map.f_note">Note</span>
-          <input id="meas-note" class="inp" maxlength="200" autocomplete="off" data-i18n-ph="map.ph_note" placeholder="e.g. door closed">
-        </label>
-        <div id="meas-confirm" class="meas-confirm" role="group" aria-labelledby="meas-confirm-text" hidden>
-          <p id="meas-confirm-text" class="small"></p>
-        </div>
-        <div id="meas-dlg-msg" class="msg small" role="status" aria-live="polite" hidden></div>
-        <div class="dialog-actions">
-          <button id="meas-no" type="button" class="ctrl" data-i18n="map.btn_cancel">Cancel</button>
-          <button id="meas-start" type="button" class="ctrl primary" data-i18n="map.btn_next">Continue</button>
-          <button id="meas-yes" type="button" class="ctrl primary" hidden data-i18n="map.btn_yes">Yes, switch now</button>
-        </div>
-      </form>
-    </dialog>
   </section>
 
   <!-- ============ Diagnostics ============ -->
@@ -417,6 +389,35 @@
     </details>
   </section>
 </main>
+
+  <dialog id="meas-dialog" class="dialog" aria-labelledby="meas-dlg-title">
+    <form id="meas-form" class="meas-form">
+      <h2 id="meas-dlg-title" data-i18n="map.start_here">Start a measurement</h2>
+      <label id="meas-point-wrap" class="fld"><span data-i18n="map.f_point">Point</span>
+        <select id="meas-point" class="inp"></select>
+      </label>
+      <label id="meas-text-wrap" class="fld" hidden><span data-i18n="map.f_point">Point</span>
+        <input id="meas-point-text" class="inp" list="meas-points" maxlength="64" autocomplete="off"
+          data-i18n-ph="map.ph_point" placeholder="e.g. Living room" pattern="[A-Za-z0-9 _./\-]{1,64}">
+        <datalist id="meas-points"></datalist>
+      </label>
+      <label class="fld"><span data-i18n="map.f_label">Label</span>
+        <input id="meas-label" class="inp" maxlength="200" autocomplete="off" data-i18n-ph="map.ph_label" placeholder="e.g. Night 4">
+      </label>
+      <label class="fld"><span data-i18n="map.f_note">Note</span>
+        <input id="meas-note" class="inp" maxlength="200" autocomplete="off" data-i18n-ph="map.ph_note" placeholder="e.g. door closed">
+      </label>
+      <div id="meas-confirm" class="meas-confirm" role="group" aria-labelledby="meas-confirm-text" hidden>
+        <p id="meas-confirm-text" class="small"></p>
+      </div>
+      <div id="meas-dlg-msg" class="msg small" role="status" aria-live="polite" hidden></div>
+      <div class="dialog-actions">
+        <button id="meas-no" type="button" class="ctrl" data-i18n="map.btn_cancel">Cancel</button>
+        <button id="meas-start" type="button" class="ctrl primary" data-i18n="map.btn_next">Continue</button>
+        <button id="meas-yes" type="button" class="ctrl primary" hidden data-i18n="map.btn_yes">Yes, switch now</button>
+      </div>
+    </form>
+  </dialog>
 
 <script type="module" src="/js/main.js"></script>
 </body>

@@ -53,6 +53,7 @@ const UI_MODULES: &[(&str, &str)] = &[
     ("system.js", include_str!("ui/dist/system.js")),
     ("timeline.js", include_str!("ui/dist/timeline.js")),
     ("tips.js", include_str!("ui/dist/tips.js")),
+    ("ui.js", include_str!("ui/dist/ui.js")),
     ("wifi.js", include_str!("ui/dist/wifi.js")),
 ];
 

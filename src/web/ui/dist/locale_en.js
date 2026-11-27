@@ -738,4 +738,8 @@ export const EN = {
     "m.cf_band": "{band}: {n} band-specific outage(s) occurred while other frequency band(s) stayed online.",
     "m.cf_no_overlap": "Sessions do not overlap in time — showing side-by-side comparison of rates and signal/speed.",
     "m.cf_best_worst": "Best vs worst point: {best} ({ba}% avail, {bo} outages/h) vs {worst} ({wa}% avail, {wo} outages/h).",
+    "now.spark_wait": "Collecting live samples…",
+    "tl.fail_axis": "fail",
+    "err.retry": "Try again",
+    "err.report": "The report could not be loaded. The monitor may be busy or the session is gone.",
 };

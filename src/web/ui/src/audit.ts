@@ -16,6 +16,7 @@ import { byId, el } from "./dom.js";
 import { fmtDur, fmtTime } from "./format.js";
 import { t, tDyn } from "./i18n.js";
 import { maskedMac } from "./wifi.js";
+import { kv } from "./ui.js";
 import { oneOf, state } from "./state.js";
 import { renderAlertBar } from "./system.js";
 import { tip } from "./tips.js";
@@ -33,16 +34,10 @@ function sevTone(sev: string): string {
 function showMsg(id: string, text: string, tone: "ok" | "bad" | "info"): void {
   const m = byId(id);
   m.textContent = text;
-  m.className = "meas-msg small " + tone;
+  m.className = "msg small " + tone;
   m.hidden = text === "";
 }
 
-function kvRow(dl: HTMLDListElement, label: string, val: Node | string): void {
-  dl.append(
-    el("dt", { text: label }),
-    el("dd", null, val),
-  );
-}
 
 function renderAdviceItem(a: AdviceItem): HTMLLIElement {
   const tone = sevTone(a.severity);
@@ -173,14 +168,14 @@ export function renderAudit(): void {
   pill.className = "pill small " + (a.adapter_used === "none" ? "neutral" : "ok");
 
   kvBox.replaceChildren();
-  kvRow(kvBox, t("k.gateway_ip"), a.gateway_ip ?? "–");
-  if (a.gateway_mac) kvRow(kvBox, t("k.gateway_mac"), maskedMac(a.gateway_mac));
-  if (a.vendor) kvRow(kvBox, t("k.vendor"), a.vendor);
-  if (a.model) kvRow(kvBox, t("k.model"), a.model);
-  if (a.firmware) kvRow(kvBox, t("k.firmware"), a.firmware);
+  kv(kvBox, t("k.gateway_ip"), a.gateway_ip ?? "–");
+  if (a.gateway_mac) kv(kvBox, t("k.gateway_mac"), maskedMac(a.gateway_mac));
+  if (a.vendor) kv(kvBox, t("k.vendor"), a.vendor);
+  if (a.model) kv(kvBox, t("k.model"), a.model);
+  if (a.firmware) kv(kvBox, t("k.firmware"), a.firmware);
   if (a.admin_url) {
     const safeUrl = a.admin_url.startsWith("http://") || a.admin_url.startsWith("https://");
-    kvRow(
+    kv(
       kvBox,
       t("k.admin_ui"),
       safeUrl
@@ -188,9 +183,9 @@ export function renderAudit(): void {
         : el("span", { class: "mono", text: a.admin_url }),
     );
   }
-  if (a.uptime_s !== null) kvRow(kvBox, t("k.uptime"), fmtDur(a.uptime_s));
-  if (a.adapter_used !== "none") kvRow(kvBox, t("k.probed"), fmtTime(a.probed_at));
-  for (const d of a.details) kvRow(kvBox, d.label, d.value);
+  if (a.uptime_s !== null) kv(kvBox, t("k.uptime"), fmtDur(a.uptime_s));
+  if (a.adapter_used !== "none") kv(kvBox, t("k.probed"), fmtTime(a.probed_at));
+  for (const d of a.details) kv(kvBox, d.label, d.value);
 
   portsBox.replaceChildren(
     ...(a.ports.length

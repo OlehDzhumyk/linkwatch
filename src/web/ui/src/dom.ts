@@ -109,3 +109,64 @@ export function prepareCanvas(canvas: HTMLCanvasElement): { c: CanvasRenderingCo
   c.clearRect(0, 0, W, H);
   return { c, W, H };
 }
+
+/**
+ * Updates `old` in place so it looks like `neu`, keeping the existing elements (and with
+ * them keyboard focus, scroll position, open <details> and listeners) wherever the tag at the
+ * same position is the same. Live panels re-render every second through this instead of
+ * replaceChildren(), so a tooltip or a focused button survives the update.
+ * A tooltip the user has open (or points at) is left as it is.
+ */
+function morph(old: Node, neu: Node): Node {
+  if (old.nodeType !== neu.nodeType || old.nodeName !== neu.nodeName) {
+    old.parentNode?.replaceChild(neu, old);
+    return neu;
+  }
+  if (old.nodeType === Node.TEXT_NODE) {
+    if (old.nodeValue !== neu.nodeValue) old.nodeValue = neu.nodeValue;
+    return old;
+  }
+  if (!(old instanceof Element) || !(neu instanceof Element)) return old;
+  // Elements with handlers bound to one record carry data-key: another record means a new node.
+  if (old.getAttribute("data-key") !== neu.getAttribute("data-key")) {
+    old.replaceWith(neu);
+    return neu;
+  }
+  if (old.classList.contains("tip-wrap") && (old.classList.contains("open") || old.matches(":hover, :focus-within"))) {
+    return old;
+  }
+  // A canvas keeps its own size attributes (set when drawing); everything else follows `neu`.
+  const keep = old instanceof HTMLCanvasElement ? new Set(["width", "height"]) : null;
+  for (const a of [...old.attributes]) {
+    if (!neu.hasAttribute(a.name) && !keep?.has(a.name)) old.removeAttribute(a.name);
+  }
+  for (const a of [...neu.attributes]) {
+    if (old.getAttribute(a.name) !== a.value) old.setAttribute(a.name, a.value);
+  }
+  if (old instanceof HTMLInputElement && neu instanceof HTMLInputElement && old !== document.activeElement) {
+    old.checked = neu.checked;
+    old.value = neu.value;
+  }
+  patchChildren(old, [...neu.childNodes]);
+  return old;
+}
+
+function patchChildren(parent: Node, next: readonly Node[]): void {
+  const cur = [...parent.childNodes];
+  next.forEach((n, i) => {
+    const o = cur[i];
+    if (o) morph(o, n);
+    else parent.appendChild(n);
+  });
+  for (let i = next.length; i < cur.length; i++) cur[i]?.remove();
+}
+
+/** Like `box.replaceChildren(...children)`, but keeps the elements that stay the same kind. */
+export function patch(box: Element, ...children: Child[]): void {
+  const nodes: Node[] = [];
+  for (const c of children) {
+    if (c === null || c === undefined || c === false) continue;
+    nodes.push(c instanceof Node ? c : document.createTextNode(String(c)));
+  }
+  patchChildren(box, nodes);
+}

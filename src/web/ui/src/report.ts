@@ -31,7 +31,12 @@ function kpi(label: string, tkey: TipKey | null, value: string, unit: string, su
     el("span", { class: "val " + tone }, value, unit ? el("span", { class: "unit", text: unit }) : null),
     sub ? el("span", { class: "sub", text: sub }) : null,
   ];
-  return onclick ? el("button", { type: "button", class: "kpi", onclick }, ...children) : el("div", { class: "kpi" }, ...children);
+  if (!onclick) return el("div", { class: "kpi" }, ...children);
+  // A button may not contain the ⓘ button, so the whole tile is covered by a separate
+  // transparent button and the tip sits above it.
+  return el("div", { class: "kpi kpi-link" },
+    el("button", { type: "button", class: "kpi-hit", "aria-label": label + ": " + value + (unit ? " " + unit : ""), onclick }),
+    ...children);
 }
 
 const scrollTo = (id: string) => (): void => byId(id).scrollIntoView({ behavior: "smooth", block: "start" });
@@ -205,9 +210,20 @@ export function renderReport(): void {
   renderFindings(rep);
 }
 
+/** The report request failed: say so and offer a retry, instead of "Analysing…" forever. */
+function reportFailed(): void {
+  const retry = el("button", { type: "button", class: "ctrl", text: t("err.retry"), onclick: () => void loadReport() });
+  const box = el("div", { class: "msg bad small" }, t("err.report"), " ", retry);
+  byId("report-kpis").replaceChildren(box);
+  byId("incidents").replaceChildren(el("li", { class: "empty small", text: t("err.report") }));
+}
+
 export async function loadReport(): Promise<void> {
   const r = await fetchReport(state.selectedSession);
-  if (!r) return;
+  if (!r) {
+    if (!state.report) reportFailed();
+    return;
+  }
   state.report = r;
   if (state.selectedSession === LIVE) {
     state.liveReport = r;

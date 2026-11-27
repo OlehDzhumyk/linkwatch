@@ -18,7 +18,7 @@
   --info: light-dark(#285fb2, #7aabf1);
   --info-bg: light-dark(#e3ecfa, #182840);
   --neutral-bg: light-dark(#eceef2, #252a33);
-  --gw: light-dark(#0b8579, #3ec8b9);
+  --gw: light-dark(#086f65, #3ec8b9);
   --net: light-dark(#285fb2, #7aabf1);
   --sig: light-dark(#7a43c2, #b78cf1);
   --busy: light-dark(rgba(120, 130, 145, 0.28), rgba(160, 170, 185, 0.22));
@@ -38,6 +38,38 @@
   --bar-h: 56px;
 }
 :root[data-theme="light"] { color-scheme: light; }
+/* Browsers without light-dark() (Safari < 17.5, old Firefox) get the light theme instead of
+   invalid (transparent) colours. */
+@supports not (color: light-dark(#000, #fff)) {
+  :root {
+    --bg: #f4f5f7;
+    --panel: #ffffff;
+    --panel-alt: #f7f8fa;
+    --fg: #161a20;
+    --muted: #596374;
+    --border: #dde1e7;
+    --ok: #12733d;
+    --ok-bg: #e2f3e8;
+    --warn: #965800;
+    --warn-bg: #fcefd6;
+    --bad: #b3212a;
+    --bad-bg: #fbe4e4;
+    --info: #285fb2;
+    --info-bg: #e3ecfa;
+    --neutral-bg: #eceef2;
+    --gw: #086f65;
+    --net: #285fb2;
+    --sig: #7a43c2;
+    --busy: rgba(120, 130, 145, 0.28);
+    --grid: rgba(120, 130, 145, 0.18);
+    --crosshair: rgba(22, 26, 32, 0.35);
+    --room: #f7f8fa;
+    --fixed: #c9ced6;
+    --accent: #285fb2;
+    --on-accent: #ffffff;
+    --shadow: 0 8px 28px rgba(15, 20, 30, 0.14);
+  }
+}
 :root[data-theme="dark"] { color-scheme: dark; }
 
 /* ---------- base ---------- */
@@ -131,6 +163,8 @@ a { color: var(--accent); }
 /* ---------- layout ---------- */
 main { max-width: 1200px; margin: 0 auto; padding: var(--s4) var(--s4) var(--s6); display: grid; gap: var(--s4); }
 .view { display: grid; gap: var(--s4); min-width: 0; }
+/* Section jumps (Diagnostics chips) stop below the sticky app bar and tabs. */
+.view > section, .view > details, .view > div { scroll-margin-top: calc(var(--bar-h) + 56px); }
 
 .card-sec {
   background: var(--panel); border: 1px solid var(--border); border-radius: var(--r);
@@ -315,8 +349,13 @@ canvas.spark { display: block; width: 100%; height: 36px; background: var(--pane
   background: var(--panel-alt); border: 1px solid var(--border); border-radius: var(--r-sm);
   padding: var(--s2) var(--s3); display: grid; gap: 2px; text-align: left; font: inherit; color: var(--fg);
 }
-button.kpi { cursor: pointer; }
-button.kpi:hover { border-color: var(--accent); }
+.kpi-link { position: relative; }
+.kpi-link:hover { border-color: var(--accent); }
+.kpi-hit {
+  position: absolute; inset: 0; width: 100%; height: 100%; border: 0; padding: 0;
+  background: transparent; border-radius: inherit; cursor: pointer;
+}
+.kpi-link .tip-wrap { position: relative; z-index: 1; }
 .kpi .lbl { font-size: 12px; color: var(--muted); display: inline-flex; align-items: center; gap: var(--s1); }
 .kpi .val { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.25; }
 .kpi .val .unit { font-size: 13px; font-weight: 400; color: var(--muted); margin-left: 2px; }
@@ -478,7 +517,7 @@ tr.connected td { font-weight: 600; background: var(--ok-bg); }
 .hr-lbl { font-size: 10px; font-family: var(--mono); color: var(--muted); line-height: 1; height: 10px; }
 
 /* ---------- Diagnostics ---------- */
-.wifi-links { display: grid; gap: var(--s3); grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.wifi-links { display: grid; gap: var(--s3); grid-template-columns: repeat(auto-fill, minmax(280px, 460px)); }
 .wifi-card {
   background: var(--panel-alt); border: 1px solid var(--border); border-radius: var(--r-sm); padding: var(--s3);
   display: flex; flex-direction: column; gap: var(--s2);
@@ -583,7 +622,7 @@ tr.connected td { font-weight: 600; background: var(--ok-bg); }
 .plan .hatch-line { stroke: var(--fixed); stroke-width: 0.12; }
 .plan text { fill: var(--fg); font-size: 0.55px; font-family: var(--sans); pointer-events: none; text-anchor: middle; dominant-baseline: central; }
 .plan text.unit-label { font-size: 0.7px; font-weight: 700; text-anchor: start; dominant-baseline: auto; }
-.plan text.room-name { font-size: 0.34px; font-weight: 600; }
+.plan text.room-name { font-size: 0.34px; font-weight: 600; paint-order: stroke; stroke: var(--room); stroke-width: 0.08; }
 .plan text.room-sub { font-size: 0.27px; fill: var(--muted); }
 .plan .pt { fill: var(--muted); stroke: var(--panel); stroke-width: 0.06; cursor: pointer; }
 .plan .pt.ok { fill: var(--ok); }
@@ -617,7 +656,7 @@ tr.connected td { font-weight: 600; background: var(--ok-bg); }
 .plan text.ghost-lbl { font-size: 0.25px; font-weight: 600; fill: var(--accent); }
 .plan .rf-ray { stroke: var(--accent); stroke-width: 0.06; stroke-dasharray: 0.2 0.12; fill: none; pointer-events: none; }
 .plan .rf-hit { fill: var(--warn); stroke: var(--panel); stroke-width: 0.03; pointer-events: none; }
-.plan text.rf-lbl { font-size: 0.3px; font-weight: 700; fill: var(--accent); }
+.plan text.rf-lbl { font-size: 0.3px; font-weight: 700; fill: var(--accent); paint-order: stroke; stroke: var(--panel); stroke-width: 0.1; }
 @keyframes lw-pulse { 0%, 100% { stroke-opacity: 1; } 50% { stroke-opacity: 0.2; } }
 @keyframes lw-pulse-outline { 0%, 100% { outline-color: var(--info); } 50% { outline-color: transparent; } }
 
@@ -686,6 +725,7 @@ tr.connected td { font-weight: 600; background: var(--ok-bg); }
 /* ---------- tooltips ---------- */
 .tip-wrap { position: relative; display: inline-flex; align-items: center; vertical-align: middle; }
 .tip-btn {
+  position: relative;
   display: inline-flex; align-items: center; justify-content: center;
   width: 16px; height: 16px; padding: 0; border-radius: 50%;
   border: 1px solid var(--border); background: var(--neutral-bg); color: var(--muted);
@@ -752,6 +792,21 @@ tr.connected td { font-weight: 600; background: var(--ok-bg); }
   .ctrl { max-width: 100%; }
   .seg button { padding: 8px 10px; }
   .menu { position: fixed; left: var(--s3); right: var(--s3); top: calc(var(--bar-h) + var(--s1)); min-width: 0; }
+  /* Touch targets: at least 44 px; the 16 px ⓘ gets an invisible 44 px hit area. */
+  .ctrl, .seg button, .chip, .icon-btn { min-height: 44px; }
+  .tip-btn::before { content: ""; position: absolute; inset: -14px; }
+  button.mac-btn { padding: 12px 0; }
+  .icon-btn { width: 44px; height: 44px; }
+  .ctx-chip { min-height: 44px; }
+  a.link { display: inline-flex; align-items: center; min-height: 44px; }
+  /* Compact path chain: one line per hop, so the failing path stays on the first screen. */
+  .hero { gap: var(--s2); }
+  .hop-box { grid-auto-flow: column; justify-content: start; align-items: baseline; gap: var(--s2); padding: 6px 10px; min-width: 0; }
+  .hop-name { font-size: 13px; }
+  .edge { height: 8px; }
+  .link-tag { padding: 2px 6px; }
+  /* Map controls and legend: one scrolling row each instead of many wrapped rows. */
+  #site-panel .controls-row, #site-legend { flex-wrap: nowrap; overflow-x: auto; white-space: nowrap; padding-bottom: 2px; }
   .dialog { padding: var(--s4); }
 }
 @media (prefers-reduced-motion: reduce) {

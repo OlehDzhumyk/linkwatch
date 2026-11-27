@@ -79,20 +79,27 @@ function drawHighlight(c, x, start, end, L, W, R, top, bottom) {
     c.stroke();
     c.restore();
 }
+/** Y-axis label, right-aligned 4 px left of the plot so it never touches the lines. */
+function axisLabel(c, text, left, y) {
+    const a = c.textAlign;
+    c.textAlign = "right";
+    c.fillText(text, left - 4, y);
+    c.textAlign = a;
+}
 function drawTimeline(canvas, buckets, hours, start, end) {
     const hoverT = views.get(canvas)?.hoverT ?? null;
     const cv = prepareCanvas(canvas);
     if (!cv)
         return;
     const { c, W, H } = cv;
-    const L = 36, R = 6;
+    const L = 46, R = 6;
     const pw = W - L - R;
     const failTop = 2, failH = 16;
     const rttTop = 22, rttH = Math.round((H - 22 - 16) * 0.55);
     const wTop = rttTop + rttH + 6, wH = H - wTop - 16;
     const colWidth = Math.max(1.5, pw / (hours * 60));
     const x = drawTimeGrid(c, W, H, L, pw, start, end, hours, rttTop);
-    c.fillText("fail", 2, failTop + 12);
+    axisLabel(c, t("tl.fail_axis"), L, failTop + 12);
     const rtts = [];
     for (const b of buckets) {
         if (b.net_rtt_avg !== null)
@@ -104,16 +111,16 @@ function drawTimeline(canvas, buckets, hours, start, end) {
     const p98 = rtts[Math.floor(rtts.length * 0.98)] ?? 50;
     const rttMax = Math.min(1000, Math.max(20, Math.ceil(p98 / 10) * 10));
     const yR = (v) => rttTop + rttH - (Math.min(v, rttMax) / rttMax) * rttH;
-    c.fillText(rttMax + "ms", 0, rttTop + 8);
-    c.fillText("0", 2, rttTop + rttH);
+    axisLabel(c, rttMax + "ms", L, rttTop + 8);
+    axisLabel(c, "0", L, rttTop + rttH);
     c.beginPath();
     c.moveTo(L, rttTop + rttH + 0.5);
     c.lineTo(W - R, rttTop + rttH + 0.5);
     c.stroke();
     const hasWifi = buckets.some((b) => b.signal_dbm !== null || b.busy_pct !== null);
     if (hasWifi) {
-        c.fillText("-30", 4, wTop + 8);
-        c.fillText("-90", 4, wTop + wH);
+        axisLabel(c, "-30", L, wTop + 8);
+        axisLabel(c, "-90", L, wTop + wH);
         c.fillStyle = cssVar("--busy");
         for (const b of buckets) {
             if (b.busy_pct === null)
@@ -168,13 +175,13 @@ function drawLanTimeline(canvas, points, allBuckets, hours, start, end) {
     if (!cv)
         return;
     const { c, W, H } = cv;
-    const L = 36, R = 6;
+    const L = 46, R = 6;
     const pw = W - L - R;
     const failTop = 2, failH = 12;
     const chartTop = 18, chartH = H - chartTop - 16;
     const colWidth = Math.max(1.5, pw / (hours * 60));
     const x = drawTimeGrid(c, W, H, L, pw, start, end, hours, chartTop);
-    c.fillText("fail", 2, failTop + 10);
+    axisLabel(c, t("tl.fail_axis"), L, failTop + 10);
     // Align failures from all interfaces on the top strip.
     const failFrac = new Map();
     for (const b of allBuckets) {
@@ -198,8 +205,8 @@ function drawLanTimeline(canvas, points, allBuckets, hours, start, end) {
     const maxY = Math.max(10, Math.ceil(maxArp / 5) * 5);
     const y = (v) => chartTop + chartH - (Math.min(v, maxY) / maxY) * chartH;
     c.fillStyle = cssVar("--muted");
-    c.fillText(String(maxY), 2, chartTop + 8);
-    c.fillText("0", 2, chartTop + chartH);
+    axisLabel(c, String(maxY), L, chartTop + 8);
+    axisLabel(c, "0", L, chartTop + chartH);
     c.strokeStyle = cssVar("--grid");
     c.beginPath();
     c.moveTo(L, chartTop + chartH + 0.5);
