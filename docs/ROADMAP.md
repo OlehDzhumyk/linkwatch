@@ -50,5 +50,17 @@ All new adapters must enforce `validate_local_host()` (private/loopback IPv4 onl
 ## 4. End-of-Life Tracking & UI Session Compare
 
 - **Router EOL Warnings:** Flag hardware/firmware families in `src/advice.rs` when vendor security support is older than a configurable threshold (e.g. 3 years).
-- **Web UI Multi-Session Compare View:** Select 2+ recorded sessions directly in **Map & Plan** and render `/api/compare` findings interactively in the browser.
+- ~~**Web UI Multi-Session Compare View**~~ — done in 0.5.0 (Sessions view).
 - **Additional UI Languages:** Community locale files following [docs/I18N.md](I18N.md) (Spanish, Polish, German, French, etc.).
+
+---
+
+## 5. Dependency hygiene
+
+- **Replace `chrono`** (RUSTSEC-2026-0543, unmaintained) with `jiff`; until then the advisory is
+  ignored in `.cargo/audit.toml`.
+- **`paste`** (RUSTSEC-2024-0436) comes in through `rustls-rustcrypto`; it goes away when that
+  provider is replaced or updated.
+- **Major updates proposed by Dependabot** (axum 0.8, md-5 0.11, netlink-sys 0.9) need code
+  changes; they are done as separate pull requests, never merged blind.
+- **UI interaction and motion** (stage 3): see [docs/UI-DESIGN.md](UI-DESIGN.md) §11.

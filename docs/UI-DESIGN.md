@@ -382,3 +382,91 @@ it loads data.
 - Contrast: every text/background token pair ≥ 4.5:1 in both themes.
 - Keyboard: every action reachable with Tab; visible focus ring; dialogs trap focus.
 - Screenshots of each view (1440 dark, 390 light, UK) attached to the PR.
+
+---
+
+## 11. Interaction and motion (proposal, stage 3)
+
+Stage 2 fixed *what* is on each screen. This section decides *how it behaves*: what a click,
+a drag, a hover and a key do, and which changes move. Nothing here is built yet.
+
+### 11.1 Principles
+
+1. **Motion explains a change; it never decorates.** Something moves only when it changes place
+   or state (a panel opens, an incident is focused, a verdict gets worse). Live numbers do not
+   count up or bounce.
+2. **Short and calm.** 120–200 ms, ease-out for entering, ease-in for leaving. One property at a
+   time (opacity or transform), never layout properties.
+3. **Reduced motion is a first-class mode.** `prefers-reduced-motion`: no movement, only
+   instant state change or opacity.
+4. **Every gesture has a key and a button.** Drag, hover and long-press are shortcuts; there is
+   always a visible control that does the same.
+5. **Direct manipulation only where position *is* the data:** the floor plan and the time axis.
+   Lists (plan, sessions) are not dragged.
+
+### 11.2 Input vocabulary (the same everywhere)
+
+| Input | Meaning | Never |
+|---|---|---|
+| Click / tap | select or open | start a measurement, delete (those always confirm) |
+| Hover | preview only (crosshair, tooltip) | the only way to see a value |
+| Double-click | — (not used: hard on touch, easy to trigger by accident) | |
+| Long-press (touch) | the hover preview of desktop | |
+| Drag | change a position or a range | reorder lists |
+| Esc | close the topmost layer (tip → menu → sheet → dialog) | |
+| ← / → on a focused chart | move one minute; Shift = 10 min | |
+
+### 11.3 Where drag helps (and where it does not)
+
+| Place | Drag does | Without drag | Value |
+|---|---|---|---|
+| **Timeline** | brush a time range → zoom; incidents list filters to it | range buttons, keyboard | high: "what happened 02:10–02:40" is the core question |
+| **Floor plan** | pan; pinch / wheel zoom (phone and desktop) | +/− buttons, fit | medium: plans of 12 × 12 m are small on a phone |
+| **Layout editor** (pending feature) | move/resize rooms, walls, doors, points; snap to a 0.1 m grid and to other walls; Alt = no snap | numeric fields in a side panel | high, but only inside the editor |
+| **Phone sheets** (point details, dialog) | swipe down to close | close button, Esc | low, expected by phone users |
+| Plan checklist, sessions | — | — | dragging adds risk, no value |
+
+### 11.4 Motion catalogue
+
+| Event | Motion | Duration |
+|---|---|---|
+| View switch | content fades in; no slide (views are not a sequence) | 120 ms |
+| Verdict worsens | hero colour cross-fades; the stripe pulses **once** | 200 ms + 1 pulse |
+| New incident (live) | row slides in from top, highlighted for 2 s | 160 ms |
+| Incident → timeline | smooth scroll, then a ring pulses on the minute | scroll + 600 ms |
+| Map selection | room stroke thickens; RF ray draws from router to room | 180 ms |
+| Dialog / sheet | fade + scale 0.98 → 1 (desktop), slide up (phone) | 150 ms |
+| Menu, tooltip | fade only | 100 ms |
+| Data refresh | none (values change in place); a stale dot after 2× refresh time | — |
+
+### 11.5 Technical options (decision needed)
+
+The CSP and the "no `.style`" rule shape what is possible:
+
+| Option | How | Pros | Cons |
+|---|---|---|---|
+| **A. CSS-only** | state classes + `transition`; drag only in SVG (`transform` attribute) | no new rules, smallest code | no FLIP list animations; HTML elements cannot follow the pointer |
+| **B. A + Web Animations API** | `element.animate()` for FLIP and sheets; CSP does not cover it | smooth list and sheet motion, still no inline styles | relaxes our own "no `.style`" rule in spirit; needs a small `motion.ts` with a reduced-motion guard |
+| **C. B + view transitions** | `document.startViewTransition()` for view switches | native cross-fades between views | Chrome/Safari only; Firefox falls back to instant |
+
+Recommendation: **B** (with A as the fallback when the API is missing). It keeps the CSP strict and
+puts all motion in one audited module.
+
+### 11.6 Component layer (decision needed)
+
+| Option | Idea | Fit |
+|---|---|---|
+| **1. Keep functions + `el()`** (today) | components are functions that return elements; full re-render per update | simplest; re-renders lose focus/scroll and make animation hard |
+| **2. Small keyed renderer + signals** | ~300 lines: `signal()`, `effect()`, keyed list patching | animations and focus survive updates; still no framework |
+| **3. Web Components** | custom elements with constructable stylesheets | native encapsulation, CSP-friendly; heavier boilerplate, styling across shadow roots is harder |
+
+Recommendation: **2**. Motion (11.4) needs elements that survive updates; a keyed patch is the
+smallest way to get that.
+
+### 11.7 Order
+
+1. `motion.ts` + reduced-motion guard + the catalogue for existing views (no drag).
+2. Keyed renderer for lists that update live (incidents, events, sessions).
+3. Timeline brush (drag a range, keyboard equivalent).
+4. Plan pan/zoom.
+5. Layout editor with snapping (its own design pass first).
