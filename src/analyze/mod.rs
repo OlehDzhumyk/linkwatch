@@ -102,6 +102,8 @@ pub struct Episode {
     pub origin: IncidentOrigin,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub band: Option<String>,
+    #[serde(default)]
+    pub speedtest_active: bool,
     pub context: Vec<String>,
     /// `context` as translatable messages (same order).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -114,6 +116,12 @@ impl Episode {
         self.context.push(m.text.clone());
         self.context_msg.push(m);
     }
+}
+
+/// True when a non-observer episode occurred during the monitor's own speed test and was short
+/// enough (<= 45 s) to represent self-induced saturation rather than an idle unprovoked outage.
+pub fn is_load_provoked(ep: &Episode) -> bool {
+    ep.origin != IncidentOrigin::Observer && ep.speedtest_active && ep.duration_s <= 45.0
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -301,6 +309,8 @@ pub struct Report {
     pub observer_incidents: u32,
     #[serde(default)]
     pub network_incidents: u32,
+    #[serde(default)]
+    pub load_incidents: u32,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub security_events: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

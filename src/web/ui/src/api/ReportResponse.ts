@@ -14,7 +14,7 @@ export type ReportResponse = { session: string, from: string | null, to: string 
  * English sentence; `verdict_code` + `verdict_args` let the UI translate it
  * (`report.vc.<code>`).
  */
-verdict_summary: string, verdict_code: string, verdict_args: { [key in string]: string }, network_incidents: number, observer_incidents: number, ifaces: Array<ReportIface>, episodes: Array<ReportEpisode>, 
+verdict_summary: string, verdict_code: string, verdict_args: { [key in string]: string }, network_incidents: number, load_incidents: number, observer_incidents: number, ifaces: Array<ReportIface>, episodes: Array<ReportEpisode>, 
 /**
  * Analyzer findings, patterns and observer notes as translatable messages.
  */

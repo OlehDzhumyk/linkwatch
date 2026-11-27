@@ -207,5 +207,12 @@ pub(super) fn findings(r: &Report) -> Vec<Msg> {
             total = total, wifi = g("wifi_problem"), wired = g("wired_problem"), router = g("router_problem"), line = g("line_problem"),
             inet = g("internet_problem"), dns = g("dns"), single = g("single_path"), unclear = g("unknown") + g("all_ok")));
     }
+    if r.load_incidents > 0 {
+        f.push(msg!(
+            "f_load_incidents",
+            "{n} short incident(s) occurred during the monitor's own speed test and are excluded from unprovoked network outages.",
+            n = r.load_incidents
+        ));
+    }
     f
 }

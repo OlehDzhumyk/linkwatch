@@ -243,6 +243,7 @@ pub struct SessionRow {
     pub id: String,
     pub label: String,
     pub host: String,
+    pub point: Option<String>,
     pub from: Option<DateTime<Utc>>,
     pub to: Option<DateTime<Utc>>,
     pub hours: f64,
@@ -256,9 +257,12 @@ pub struct SessionRow {
     pub micro_per_h: f64,
     pub gw_rtt_med: Option<f64>,
     pub net_rtt_med: Option<f64>,
+    pub loaded_net_rtt_med: Option<f64>,
     pub signal_med: Option<f64>,
     pub speed_med_mbps: Option<f64>,
+    pub retry_rate_per_min: Option<f64>,
     pub observer_incidents: u32,
+    pub rf: Option<crate::site::RfPathEstimate>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -305,6 +309,16 @@ impl CompareReport {
     fn warn_clock(&mut self, m: Msg) {
         self.clock_warnings.push(m.text.clone());
         self.clock_warnings_msg.push(m);
+    }
+}
+
+/// Attaches 5 GHz RF path attenuation estimates from `site` to every [`SessionRow`] whose
+/// `point` matches a site point with a reachable router/AP in the same building.
+pub fn attach_site_rf(rep: &mut CompareReport, site: &crate::site::Site) {
+    for row in &mut rep.sessions {
+        if let Some(pid) = row.point.as_deref() {
+            row.rf = site.estimate_rf(pid);
+        }
     }
 }
 
@@ -362,7 +376,7 @@ pub fn compare(sessions: Vec<SessionView>, opts: &CompareOpts) -> CompareReport 
 
         let hours = s.report.hours;
         let div_h = if hours > 1e-4 { hours } else { 1.0 };
-        let (iface, avail, outs, micros, stalls, gw, net, sig, spd) = match primary {
+        let (iface, avail, outs, micros, stalls, gw, net, loaded_net, sig, spd, retry) = match primary {
             Some(p) => (
                 p.iface.clone(),
                 p.availability_pct,
@@ -371,15 +385,18 @@ pub fn compare(sessions: Vec<SessionView>, opts: &CompareOpts) -> CompareReport 
                 p.stalls,
                 p.gw_rtt_med,
                 p.net_rtt_med,
+                p.loaded_net_rtt_med,
                 p.signal_med,
                 p.speed_med_mbps,
+                p.retry_rate_per_min,
             ),
-            None => ("-".into(), 0.0, 0, 0, 0, None, None, None, None),
+            None => ("-".into(), 0.0, 0, 0, 0, None, None, None, None, None, None),
         };
         rep.sessions.push(SessionRow {
             id: s.id.clone(),
             label: s.label.clone(),
             host: s.meta.as_ref().map_or_else(|| "-".into(), |m| m.host.clone()),
+            point: s.meta.as_ref().and_then(|m| m.point.clone()),
             from: s.report.from,
             to: s.report.to,
             hours,
@@ -393,21 +410,24 @@ pub fn compare(sessions: Vec<SessionView>, opts: &CompareOpts) -> CompareReport 
             micro_per_h: if hours > 1e-4 { f64::from(micros) / div_h } else { 0.0 },
             gw_rtt_med: gw,
             net_rtt_med: net,
+            loaded_net_rtt_med: loaded_net,
             signal_med: sig,
             speed_med_mbps: spd,
+            retry_rate_per_min: retry,
             observer_incidents: s.report.observer_incidents,
+            rf: None,
         });
     }
 
     // 4. Overlap duration where >= 2 sessions were active simultaneously.
     rep.overlap_hours = total_multi_observer_hours(&sessions);
 
-    // 5. Cluster non-observer episodes across sessions within ±tolerance_s.
+    // 5. Cluster non-observer, non-load-provoked episodes across sessions within ±tolerance_s.
     let tol = Duration::milliseconds((opts.tolerance_s * 1000.0).round() as i64);
     let mut all_eps: Vec<(usize, &Episode)> = Vec::new();
     for (idx, s) in sessions.iter().enumerate() {
         for ep in &s.report.episodes {
-            if ep.origin != IncidentOrigin::Observer {
+            if ep.origin != IncidentOrigin::Observer && !analyze::is_load_provoked(ep) {
                 all_eps.push((idx, ep));
             }
         }
@@ -755,6 +775,7 @@ mod tests {
             cause: Some(Verdict::SinglePath),
             origin,
             band: band.map(String::from),
+            speedtest_active: false,
             context: vec![],
             context_msg: vec![],
         }

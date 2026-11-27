@@ -1239,6 +1239,8 @@ pub(crate) struct ReportIface {
     pub longest_s: f64,
     pub gw_rtt_med: Option<f64>,
     pub net_rtt_med: Option<f64>,
+    pub loaded_gw_rtt_med: Option<f64>,
+    pub loaded_net_rtt_med: Option<f64>,
     pub peak_net_rtt_p95: Option<f64>,
     pub signal_med: Option<f64>,
     pub busy_med: Option<f64>,
@@ -1261,6 +1263,7 @@ pub(crate) struct ReportEpisode {
     pub cause: Option<Verdict>,
     pub origin: IncidentOrigin,
     pub band: Option<String>,
+    pub speedtest_active: bool,
     /// Context lines (translatable; `text` is English).
     pub context: Vec<Msg>,
 }
@@ -1300,6 +1303,7 @@ pub(crate) struct ReportResponse {
     pub verdict_code: String,
     pub verdict_args: BTreeMap<String, String>,
     pub network_incidents: u32,
+    pub load_incidents: u32,
     pub observer_incidents: u32,
     pub ifaces: Vec<ReportIface>,
     pub episodes: Vec<ReportEpisode>,
@@ -1381,7 +1385,7 @@ fn dominant_cause(rep: &Report) -> Option<Verdict> {
         Verdict::Unknown => 8,
     };
     for ep in &rep.episodes {
-        if ep.origin == IncidentOrigin::Observer {
+        if ep.origin == IncidentOrigin::Observer || crate::analyze::is_load_provoked(ep) {
             continue;
         }
         let Some(c) = ep.cause else { continue };
@@ -1469,6 +1473,8 @@ fn analyze_session_dir(dir: &Path, id: String, live_verdict: Option<Verdict>) ->
             longest_s: i.longest_s,
             gw_rtt_med: i.gw_rtt_med,
             net_rtt_med: i.net_rtt_med,
+            loaded_gw_rtt_med: i.loaded_gw_rtt_med,
+            loaded_net_rtt_med: i.loaded_net_rtt_med,
             peak_net_rtt_p95: i.peak_net_rtt_p95,
             signal_med: i.signal_med,
             busy_med: i.busy_med,
@@ -1514,6 +1520,7 @@ fn analyze_session_dir(dir: &Path, id: String, live_verdict: Option<Verdict>) ->
             cause: ep.cause,
             origin: ep.origin,
             band: ep.band.clone(),
+            speedtest_active: ep.speedtest_active,
             context: ep.context_msg.clone(),
         })
         .collect();
@@ -1530,6 +1537,7 @@ fn analyze_session_dir(dir: &Path, id: String, live_verdict: Option<Verdict>) ->
         verdict_code: vt.code.into(),
         verdict_args: vt.args,
         network_incidents: rep.network_incidents,
+        load_incidents: rep.load_incidents,
         observer_incidents: rep.observer_incidents,
         ifaces,
         episodes,
@@ -1584,6 +1592,7 @@ async fn report(State(st): State<AppState>, Query(q): Query<ReportQuery>) -> Api
             verdict_code: vt.code.into(),
             verdict_args: vt.args,
             network_incidents: 0,
+            load_incidents: 0,
             observer_incidents: 0,
             ifaces: Vec::new(),
             episodes: Vec::new(),
@@ -1695,12 +1704,17 @@ async fn compare_sessions(State(st): State<AppState>, Query(q): Query<CompareQue
     if !(2..=8).contains(&dirs.len()) {
         return Err(ApiError(StatusCode::BAD_REQUEST, "sessions must list 2..=8 session ids".into()));
     }
+    let site = st.site.clone();
     let rep = blocking(&st, move || {
         let mut views = Vec::with_capacity(dirs.len());
         for d in dirs {
             views.push(crate::compare::SessionView::load(&d)?);
         }
-        Ok::<_, anyhow::Error>(crate::compare::compare(views, &crate::compare::CompareOpts { tolerance_s: tol }))
+        let mut rep = crate::compare::compare(views, &crate::compare::CompareOpts { tolerance_s: tol });
+        if let Some(site) = site.as_deref() {
+            crate::compare::attach_site_rf(&mut rep, site);
+        }
+        Ok::<_, anyhow::Error>(rep)
     })
     .await?
     .map_err(internal)?;

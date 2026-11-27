@@ -133,7 +133,14 @@ function renderCompare(rep: CompareReport): void {
       row(t("cmp.micro_h"), rep.sessions.map((s, i) => val(i, s.micro_per_h.toFixed(2)))),
       row(t("report.gw_med"), rep.sessions.map((s) => ms(s.gw_rtt_med))),
       row(t("report.net_med"), rep.sessions.map((s) => ms(s.net_rtt_med))),
+      rep.sessions.some((s) => s.loaded_net_rtt_med !== null) ? row(t("cmp.loaded_net"), rep.sessions.map((s) => ms(s.loaded_net_rtt_med))) : null,
       row(t("report.wifi_med"), rep.sessions.map((s) => (s.signal_med !== null ? Math.round(s.signal_med) + " dBm" : "–"))),
+      rep.sessions.some((s) => s.retry_rate_per_min !== null)
+        ? row(t("cmp.retries"), rep.sessions.map((s) => (s.retry_rate_per_min !== null ? t("cmp.retries_val", { v: s.retry_rate_per_min.toFixed(0) }) : "–")))
+        : null,
+      rep.sessions.some((s) => s.rf !== null)
+        ? row(t("cmp.rf_path"), rep.sessions.map((s) => (s.rf ? t("cmp.rf_val", { m: s.rf.distance_m.toFixed(1), w: s.rf.walls_crossed, db: s.rf.obstacle_loss_db.toFixed(0) }) : "–")))
+        : null,
       row(t("cmp.speed"), rep.sessions.map((s) => (s.speed_med_mbps !== null ? s.speed_med_mbps.toFixed(0) + " Mbit/s" : "–"))),
       row(t("report.obs_inc"), rep.sessions.map((s, i) => val(i, String(s.observer_incidents))))));
 

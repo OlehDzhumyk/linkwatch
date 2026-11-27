@@ -241,6 +241,7 @@ details.disc > summary:hover { color: var(--fg); }
   background: var(--neutral-bg); color: var(--muted);
   font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums;
 }
+.badge.badge-warn { background: var(--warn-bg); color: var(--warn); }
 .host-chip {
   display: inline-flex; align-items: center; gap: var(--s1);
   padding: 2px var(--s2); border-radius: var(--r-sm); background: var(--neutral-bg); color: var(--fg); font-size: 12px;

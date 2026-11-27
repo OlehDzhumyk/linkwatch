@@ -10,6 +10,10 @@ import { incidentsTone, sigTone } from "./status.js";
 import { tip } from "./tips.js";
 import { emptyState, errorState } from "./ui.js";
 const HOURS = Array.from({ length: 24 }, (_, h) => h);
+/** True when a non-observer episode happened during the monitor's own speed test and was short (<= 45 s). */
+export function isLoadProvoked(ep) {
+    return ep.origin !== "observer" && ep.speedtest_active && ep.duration_s <= 45.0;
+}
 /** Translated verdict sentence of a report (server code + args), English text as fallback. */
 export function verdictSentence(rep) {
     return tDyn("vc." + rep.verdict_code, rep.verdict_summary, rep.verdict_args);
@@ -40,14 +44,21 @@ function renderKpis(rep) {
     const net = worstIface(rep.ifaces);
     const wifi = rep.ifaces.find((i) => i.role === "wifi") ?? null;
     const micro = rep.ifaces.reduce((a, i) => a + i.micro_drops, 0);
+    const netSub = [
+        net?.peak_net_rtt_p95 !== null && net?.peak_net_rtt_p95 !== undefined ? t("report.p95", { v: ms(net.peak_net_rtt_p95) }) : null,
+        net?.loaded_net_rtt_med !== null && net?.loaded_net_rtt_med !== undefined ? t("report.loaded_rtt", { v: ms(net.loaded_net_rtt_med) }) : null,
+    ].filter(Boolean).join(" · ") || null;
     const cards = [
         kpi(t("report.avail"), "availability", net ? net.availability_pct.toFixed(2) : "–", net ? "%" : "", net && rep.ifaces.length > 1 ? t("report.worst_path", { iface: net.iface }) : null, availTone(net?.availability_pct) ?? "", scrollTo("h-timeline")),
         kpi(t("report.net_inc"), "micro_drops", String(rep.network_incidents), "", micro ? t("report.micro_n", { n: micro }) : null, incidentsTone(rep.network_incidents, micro), scrollTo("h-incidents")),
         kpi(t("report.gw_med"), "router_rtt", net?.gw_rtt_med !== null && net?.gw_rtt_med !== undefined ? ms(net.gw_rtt_med) : "–", "", null, ""),
-        kpi(t("report.net_med"), "net_rtt", net?.net_rtt_med !== null && net?.net_rtt_med !== undefined ? ms(net.net_rtt_med) : "–", "", net?.peak_net_rtt_p95 !== null && net?.peak_net_rtt_p95 !== undefined ? t("report.p95", { v: ms(net.peak_net_rtt_p95) }) : null, ""),
+        kpi(t("report.net_med"), "net_rtt", net?.net_rtt_med !== null && net?.net_rtt_med !== undefined ? ms(net.net_rtt_med) : "–", "", netSub, ""),
     ];
     if (wifi && wifi.signal_med !== null) {
         cards.push(kpi(t("report.wifi_med"), "signal", String(Math.round(wifi.signal_med)), "dBm", wifi.busy_med !== null ? t("report.busy_n", { n: Math.round(wifi.busy_med) }) : null, sigTone(wifi.signal_med) === "bad" ? "bad" : ""));
+    }
+    if (rep.load_incidents) {
+        cards.push(kpi(t("report.load_inc"), null, String(rep.load_incidents), "", t("report.load_excluded"), ""));
     }
     if (rep.observer_incidents) {
         cards.push(kpi(t("report.obs_inc"), null, String(rep.observer_incidents), "", t("report.obs_excluded"), ""));
@@ -100,17 +111,20 @@ function renderHourly(rep) {
 /** One incident: time, path, duration, cause; a click marks it on the timeline. */
 export function episodeRow(ep, withContext = true, live = false) {
     const isObs = ep.origin === "observer";
+    const isLoad = isLoadProvoked(ep);
     const [cLbl, cTone] = isObs
         ? [t("report.observer"), "neutral"]
-        : ep.cause
-            ? verdictLabel(ep.cause)
-            : stateLabel(ep.state);
+        : isLoad
+            ? [t("report.load_badge"), "warn"]
+            : ep.cause
+                ? verdictLabel(ep.cause)
+                : stateLabel(ep.state);
     const ctx = withContext ? ep.context.slice(0, 4).map((c) => el("span", { class: "inc-ctx", text: tMsg(c) })) : [];
     return el("li", null, el("button", {
         type: "button",
         class: "inc-item " + cTone,
         onclick: () => bus.dispatchEvent(new CustomEvent(live ? "focus-live-time" : "focus-time", { detail: ep.start })),
-    }, el("div", { class: "inc-top" }, el("span", { class: "inc-meta" }, el("span", { class: "mono small", text: fmtTime(ep.start) }), el("span", { class: "mono small inc-iface", text: ep.iface }), ep.band ? el("span", { class: "badge", text: ep.band }) : null, el("strong", { class: "small", text: fmtDur(ep.duration_s) })), el("span", { class: "pill small " + cTone, text: cLbl })), ctx.length ? el("div", { class: "inc-ctxs" }, ...ctx) : null));
+    }, el("div", { class: "inc-top" }, el("span", { class: "inc-meta" }, el("span", { class: "mono small", text: fmtTime(ep.start) }), el("span", { class: "mono small inc-iface", text: ep.iface }), ep.band ? el("span", { class: "badge", text: ep.band }) : null, ep.speedtest_active ? el("span", { class: "badge badge-warn", text: t("report.load_tag") }) : null, el("strong", { class: "small", text: fmtDur(ep.duration_s) })), el("span", { class: "pill small " + cTone, text: cLbl })), ctx.length ? el("div", { class: "inc-ctxs" }, ...ctx) : null));
 }
 function renderIncidents(rep) {
     const list = byId("incidents");

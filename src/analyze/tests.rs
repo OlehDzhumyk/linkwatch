@@ -196,6 +196,7 @@ fn periodic_pattern_found() {
             cause: None,
             origin: IncidentOrigin::Network,
             band: None,
+            speedtest_active: false,
             context: vec![],
             context_msg: vec![],
         })
@@ -502,6 +503,34 @@ fn short_failure_during_own_speed_test_is_an_observer_incident() {
     let r = a.finish(&[]);
     assert_eq!(r.observer_incidents, 1, "{r:#?}");
     assert_eq!(r.network_incidents, 0, "{r:#?}");
+}
+
+#[test]
+fn dual_path_drop_during_own_speed_test_is_load_incident() {
+    let t0 = DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+    let mut a = Analyzer::new(Opts::default());
+    for i in 0..60 {
+        let t = t0 + Duration::seconds(i);
+        let bad = (20..26).contains(&i);
+        let st = if bad { PathState::WanDown } else { PathState::Ok };
+        for (iface, role) in [("wlo1", IfaceRole::Wifi), ("eth0", IfaceRole::Ethernet)] {
+            let mut r = samp(iface, role, st, 3.0);
+            if let Record::Sample(s) = &mut r
+                && (18..27).contains(&i)
+            {
+                s.speedtest_active = true;
+            }
+            a.push(&env(t, r));
+        }
+    }
+    let r = a.finish(&[]);
+    assert_eq!(r.observer_incidents, 0, "{r:#?}");
+    assert_eq!(r.load_incidents, 1, "{r:#?}");
+    assert_eq!(r.network_incidents, 0, "{r:#?}");
+    assert!(r.causes.is_empty(), "{r:#?}");
+    assert!(!r.episodes.is_empty());
+    assert!(r.episodes.iter().all(|ep| ep.origin == IncidentOrigin::Network && ep.speedtest_active && is_load_provoked(ep)));
+    assert!(r.findings_msg.iter().any(|m| m.code == "f_load_incidents"));
 }
 
 #[test]

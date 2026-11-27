@@ -363,6 +363,7 @@ impl Analyzer {
                 cause: None,
                 origin: IncidentOrigin::Unknown,
                 band: dom_band,
+                speedtest_active: false,
                 context: texts(&open_context(&a.open)),
                 context_msg: open_context(&a.open),
             };
@@ -423,6 +424,7 @@ impl Analyzer {
                     cause: None,
                     origin: IncidentOrigin::Unknown,
                     band: dom_band,
+                    speedtest_active: false,
                     context: texts(&open_context(&a.open)),
                 context_msg: open_context(&a.open),
                 }, flags));
@@ -491,6 +493,7 @@ impl Analyzer {
             });
             let corroborated = !others.is_empty() || router_hit;
 
+            ep.speedtest_active = flags.speedtest;
             let scan_obs = flags.scan && ep.role == IfaceRole::Wifi && !corroborated && ep.duration_s <= 12.0;
             // Our own speed test saturates the link; a short failure that overlaps it and that no
             // other path or the router log confirms is the observer's doing.
@@ -796,16 +799,19 @@ impl Analyzer {
 
         let key = |v: Option<Verdict>| v.map_or("unknown", Verdict::as_str).to_string();
         for e in &episodes {
-            if e.origin != IncidentOrigin::Observer {
+            if e.origin != IncidentOrigin::Observer && !is_load_provoked(e) {
                 *rep.causes.entry(key(e.cause)).or_default() += 1;
             }
         }
         // Incidents: overlapping episodes of different interfaces are one real-world event.
-        // Observer-origin incidents are counted separately and excluded from network verdicts.
-        let mut cur: Option<(DateTime<Utc>, &Episode, bool)> = None;
-        let record_inc = |rep: &mut Report, longest: &Episode, all_obs: bool| {
+        // Observer-origin and short speedtest-load incidents are counted separately and excluded
+        // from unprovoked network verdicts.
+        let mut cur: Option<(DateTime<Utc>, &Episode, bool, bool)> = None;
+        let record_inc = |rep: &mut Report, longest: &Episode, all_obs: bool, has_unprovoked: bool| {
             if all_obs {
                 rep.observer_incidents += 1;
+            } else if !has_unprovoked {
+                rep.load_incidents += 1;
             } else {
                 rep.network_incidents += 1;
                 *rep.incidents.entry(key(longest.cause)).or_default() += 1;
@@ -813,24 +819,26 @@ impl Analyzer {
         };
         for e in &episodes {
             let obs = e.origin == IncidentOrigin::Observer;
+            let unprovoked = !obs && !is_load_provoked(e);
             match &mut cur {
-                Some((end, longest, all_obs)) if e.start < *end => {
+                Some((end, longest, all_obs, has_unprovoked)) if e.start < *end => {
                     *end = (*end).max(e.end);
                     *all_obs &= obs;
+                    *has_unprovoked |= unprovoked;
                     if e.duration_s > longest.duration_s {
                         *longest = e;
                     }
                 }
                 _ => {
-                    if let Some((_, l, all_obs)) = cur.take() {
-                        record_inc(&mut rep, l, all_obs);
+                    if let Some((_, l, all_obs, has_unprovoked)) = cur.take() {
+                        record_inc(&mut rep, l, all_obs, has_unprovoked);
                     }
-                    cur = Some((e.end, e, obs));
+                    cur = Some((e.end, e, obs, unprovoked));
                 }
             }
         }
-        if let Some((_, l, all_obs)) = cur {
-            record_inc(&mut rep, l, all_obs);
+        if let Some((_, l, all_obs, has_unprovoked)) = cur {
+            record_inc(&mut rep, l, all_obs, has_unprovoked);
         }
         if !self.host_power_save_ifaces.is_empty() {
             let names: Vec<_> = self.host_power_save_ifaces.iter().cloned().collect();
@@ -932,7 +940,11 @@ impl Analyzer {
             });
         }
 
-        let net_eps: Vec<Episode> = episodes.iter().filter(|e| e.origin != IncidentOrigin::Observer).cloned().collect();
+        let net_eps: Vec<Episode> = episodes
+            .iter()
+            .filter(|e| e.origin != IncidentOrigin::Observer && !is_load_provoked(e))
+            .cloned()
+            .collect();
         rep.patterns_msg = patterns(&net_eps, micro);
         rep.patterns = texts(&rep.patterns_msg);
         rep.episodes = episodes;

@@ -4,7 +4,7 @@ import { byId, el, patch } from "./dom.js";
 import { fmtDur, fmtTimeShort, secsSince, verdictLabel } from "./format.js";
 import { t, tDyn, tPlural } from "./i18n.js";
 import { planItem, pointLabel, progressText, statusChip } from "./points.js";
-import { episodeRow, verdictSentence } from "./report.js";
+import { episodeRow, isLoadProvoked, verdictSentence } from "./report.js";
 import { state } from "./state.js";
 /** Short live explanation while no report exists yet (first minute of a session). */
 function liveSentence() {
@@ -62,7 +62,7 @@ export function renderNowIncidents() {
         obs.hidden = true;
         return;
     }
-    const net = rep.episodes.filter((e) => e.origin !== "observer");
+    const net = rep.episodes.filter((e) => e.origin !== "observer" && !isLoadProvoked(e));
     byId("now-inc-count").textContent = String(net.length);
     list.replaceChildren(...(net.length
         ? net.slice(0, 5).map((e) => episodeRow(e, false, true))
