@@ -1,6 +1,11 @@
 # linkwatch web UI: design specification
 
-Status: **implemented** (stage 2, 27.11.2026). The owner accepted the proposals D1–D9.
+Status: **mostly implemented** (stage 2, 27.11.2026; review fixes 27.11). The owner accepted D1–D9.
+
+Not done yet (open items from the review): the 1-hour timeline on Now, `#sessions/<id>` URLs,
+phone list → report with a Back button, a tolerance control for compare, chart value bubbles
+and ←/→ keys, `src/web/ui/src/ui/` component folder (only `ui.ts` so far), contrast and i18n
+checks in `npm run check`.
 
 Differences from the draft:
 
@@ -463,10 +468,17 @@ puts all motion in one audited module.
 Recommendation: **2**. Motion (11.4) needs elements that survive updates; a keyed patch is the
 smallest way to get that.
 
+### 11.6a Decision after review (27.11)
+
+The review argued, and the owner's direction agrees: **option A** for motion (CSS transitions,
+`@starting-style`, SVG attributes, a small canvas `requestAnimationFrame` loop) and **no
+reactive framework**. The per-second re-render problem is solved by `patch()` in `dom.ts`
+(in-place update of existing nodes, `data-key` for rows bound to one record).
+
 ### 11.7 Order
 
-1. `motion.ts` + reduced-motion guard + the catalogue for existing views (no drag).
-2. Keyed renderer for lists that update live (incidents, events, sessions).
-3. Timeline brush (drag a range, keyboard equivalent).
-4. Plan pan/zoom.
-5. Layout editor with snapping (its own design pass first).
+1. Stage 2 gaps (list above), starting with the 1-hour timeline on Now.
+2. Timeline brush (drag a range), ←/→ keys and a value bubble at the pointer.
+3. Plan pan/zoom through the SVG `viewBox` (phones).
+4. Calm CSS transitions from the catalogue (11.4).
+5. Layout editor with snapping, as a separate later module (its own design pass first).
