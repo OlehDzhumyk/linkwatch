@@ -117,3 +117,10 @@ Deterministic rules emit support requests **only** when backed by measured evide
 1. **Report model additions:** Expose `loaded_gw_rtt_med` / `loaded_net_rtt_med` in `/api/report` (`ReportIface`), distinguish load/speedtest-provoked episodes from unprovoked idle outages in `ReportResponse`, and attach per-point `RfPathEstimate` data into multi-session summaries.
 2. **CLI:** `linkwatch support-report --audience isp|landlord|admin --lang en|uk --redact standard|strict|none --format text|md|html|json [sessions...]`
 3. **Web API & UI:** `GET /api/support-report` plus a **Support report** trigger on the **Sessions** tab opening a CSP-safe `<dialog>` with audience/language/redaction toggles, live preview, copy-to-clipboard button, and `<a download>` links for `.md` and printable `.html`.
+
+---
+
+## 7. Deployment, Discovery & Onboarding
+
+Current pain points (`:8080` collisions, DHCP IP drift, mobile token entry friction, firewall/AP-isolation blindness, Docker `bridge` pitfalls, and manual `scp` between probes) plus ten branching deployment scenarios (`D1`–`D10`) and a prioritized P0–P3 implementation backlog are documented in [DEPLOYMENT-SCENARIOS.md](DEPLOYMENT-SCENARIOS.md).
+
