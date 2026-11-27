@@ -1,0 +1,423 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>linkwatch</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="appbar">
+  <div class="appbar-row">
+    <a class="logo" href="#now">linkwatch</a>
+    <button id="ctx-chip" class="ctx-chip" type="button" data-i18n-title="ctx.title" title="Current measurement">
+      <span id="conn-wrap" class="conn-wrap"><span id="conn" class="conn"></span><span id="conn-txt" class="sr-only" data-i18n="conn.connecting">Connecting</span></span>
+      <span id="session" class="ctx-text"></span>
+    </button>
+    <span class="grow"></span>
+    <span id="verdict-wrap" class="verdict-wrap"><a id="verdict" class="pill neutral" href="#now" data-i18n="verdict.loading">Loading</a></span>
+    <div class="menu-wrap">
+      <button id="menu-btn" class="icon-btn" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="menu" data-i18n-aria="menu.label" aria-label="Settings">
+        <svg viewBox="0 0 24 24" aria-hidden="true" class="ico"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+      </button>
+      <div id="menu" class="menu" hidden>
+        <label class="menu-row"><span data-i18n="lang.label">Language</span>
+          <select id="lang-sel" class="ctrl" data-i18n-aria="lang.label" aria-label="Language"></select>
+        </label>
+        <div class="menu-row"><span data-i18n="theme.label">Theme</span>
+          <div id="theme-seg" class="seg" role="radiogroup" data-i18n-aria="theme.label" aria-label="Theme">
+            <button type="button" role="radio" data-theme-opt="auto" data-i18n="theme.auto">Auto</button>
+            <button type="button" role="radio" data-theme-opt="light" data-i18n="theme.light">Light</button>
+            <button type="button" role="radio" data-theme-opt="dark" data-i18n="theme.dark">Dark</button>
+          </div>
+        </div>
+        <p id="menu-access" class="small muted"></p>
+        <p id="foot" class="small muted mono"></p>
+      </div>
+    </div>
+  </div>
+  <nav id="tabs" class="tabs" role="tablist" data-i18n-aria="nav.label" aria-label="Views">
+    <button type="button" role="tab" id="tab-btn-now" data-tab="now" aria-controls="tab-now" class="tab on">
+      <svg viewBox="0 0 24 24" aria-hidden="true" class="ico"><path d="M3 12h4l3-7 4 14 3-7h4"/></svg><span data-i18n="nav.now">Now</span><span id="tab-now-dot" class="tab-dot" hidden></span>
+    </button>
+    <button type="button" role="tab" id="tab-btn-sessions" data-tab="sessions" aria-controls="tab-sessions" class="tab">
+      <svg viewBox="0 0 24 24" aria-hidden="true" class="ico"><path d="M4 6h16M4 12h16M4 18h10"/></svg><span data-i18n="nav.sessions">Sessions</span>
+    </button>
+    <button type="button" role="tab" id="tab-btn-map" data-tab="map" aria-controls="tab-map" class="tab">
+      <svg viewBox="0 0 24 24" aria-hidden="true" class="ico"><path d="M4 4h16v16H4zM4 12h9M13 4v16"/></svg><span data-i18n="nav.map">Map</span>
+    </button>
+    <button type="button" role="tab" id="tab-btn-diag" data-tab="diag" aria-controls="tab-diag" class="tab">
+      <svg viewBox="0 0 24 24" aria-hidden="true" class="ico"><circle cx="11" cy="11" r="6"/><path d="M16 16l5 5"/></svg><span data-i18n="nav.diag">Diagnostics</span><span id="tab-sys-dot" class="tab-dot" hidden></span>
+    </button>
+  </nav>
+</header>
+
+<main>
+  <section id="alert-bar" class="alert-bar" role="status" hidden></section>
+
+  <!-- ============ Now ============ -->
+  <section id="tab-now" class="view" role="tabpanel" aria-labelledby="tab-btn-now">
+    <section id="hero" class="hero neutral" aria-labelledby="hero-title">
+      <div class="hero-head">
+        <h1 id="hero-title" class="hero-title" data-i18n="verdict.loading">Loading</h1>
+        <span id="hero-since" class="small muted"></span>
+      </div>
+      <p id="verdict-explain" class="hero-text"></p>
+      <div id="topo" class="path-strip" role="list" data-i18n-aria="now.path" aria-label="Network path"></div>
+      <p id="topo-router-meta" class="small muted"></p>
+    </section>
+
+    <div class="now-grid">
+      <section class="card-sec" aria-labelledby="h-paths">
+        <div class="sec-head"><h2 id="h-paths" data-i18n="now.paths">Paths</h2></div>
+        <div id="ifaces" class="paths"></div>
+      </section>
+
+      <aside class="now-side">
+        <section id="now-meas" class="card-sec" aria-labelledby="h-now-meas">
+          <div class="sec-head">
+            <h2 id="h-now-meas" data-i18n="now.measuring">Measuring</h2>
+            <button id="switch-pt-btn" class="ctrl" type="button" hidden data-i18n="btn.switch_point">Switch point</button>
+          </div>
+          <div id="now-meas-body"></div>
+        </section>
+
+        <section id="speed-panel" class="card-sec" aria-labelledby="h-speed">
+          <div class="sec-head"><h2 id="h-speed" data-i18n="speed.title">Speed tests</h2></div>
+          <div class="scroll">
+            <table id="speed" class="tbl">
+              <thead><tr><th data-i18n="speed.th_time">Time</th><th data-i18n="speed.th_iface">Interface</th><th class="num" data-i18n="speed.th_mbps">Mbit/s</th><th class="col-wide" data-i18n="speed.th_srv">Server</th><th data-i18n="speed.th_res">Result</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </section>
+      </aside>
+    </div>
+
+    <section class="card-sec" aria-labelledby="h-recent">
+      <div class="sec-head">
+        <div class="title-row"><h2 id="h-recent" data-i18n="now.recent">Recent incidents</h2><span id="now-inc-count" class="badge">0</span></div>
+        <a class="link" href="#sessions" data-i18n="now.all_sessions">All in Sessions</a>
+      </div>
+      <ul id="now-incidents" class="inc-list"></ul>
+      <p id="now-obs" class="small muted" hidden></p>
+    </section>
+  </section>
+
+  <!-- ============ Sessions ============ -->
+  <section id="tab-sessions" class="view" role="tabpanel" aria-labelledby="tab-btn-sessions" hidden>
+    <div class="sess-layout">
+      <aside class="card-sec sess-aside" aria-labelledby="h-sess-list">
+        <div class="sec-head">
+          <h2 id="h-sess-list" data-i18n="sess.title">Sessions</h2>
+          <button id="cmp-btn" class="ctrl" type="button" disabled data-i18n="sess.compare">Compare</button>
+        </div>
+        <p class="small muted" data-i18n="sess.cmp_hint">Tick 2–8 sessions to compare them.</p>
+        <ul id="session-list" class="sess-list"></ul>
+      </aside>
+
+      <div class="sess-main">
+        <section id="compare-panel" class="card-sec" aria-labelledby="h-compare-res" hidden>
+          <div class="sec-head">
+            <h2 id="h-compare-res" data-i18n="cmp.title">Comparison</h2>
+            <div class="controls-row">
+              <a id="cmp-export" class="ctrl" href="#" download data-i18n="cmp.export">Export MD</a>
+              <button id="cmp-close" class="ctrl" type="button" data-i18n="cmp.close">Close</button>
+            </div>
+          </div>
+          <div id="compare-body"></div>
+        </section>
+
+        <section class="card-sec" id="report-panel" aria-labelledby="h-report">
+          <div class="sec-head">
+            <div class="sec-title">
+              <h2 id="h-report" data-i18n="report.title">Session report</h2>
+              <span id="rep-sub" class="small muted"></span>
+            </div>
+            <div class="menu-wrap">
+              <button id="export-btn" class="ctrl" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="export-menu" data-i18n="report.export">Export</button>
+              <div id="export-menu" class="menu menu-sm" hidden>
+                <a id="report-export-md" class="menu-item" href="/api/report/export?format=md" download data-i18n="report.export_md">Report (Markdown)</a>
+                <a id="report-export-json" class="menu-item" href="/api/report/export?format=json" download data-i18n="report.export_json">Report (JSON)</a>
+              </div>
+            </div>
+          </div>
+          <p id="rep-verdict" class="verdict-explain" hidden></p>
+          <div id="report-kpis" class="kpi-row"></div>
+        </section>
+
+        <section class="card-sec" aria-labelledby="h-timeline">
+          <div class="sec-head">
+            <h2 id="h-timeline" data-i18n="live.timeline">Timeline</h2>
+            <div class="seg" id="range" role="group" data-i18n-aria="live.range" aria-label="Time range">
+              <button type="button" data-h="0.25">15 m</button>
+              <button type="button" data-h="1">1 h</button>
+              <button type="button" data-h="3">3 h</button>
+              <button type="button" data-h="6">6 h</button>
+              <button type="button" data-h="24" class="on">24 h</button>
+              <button type="button" data-h="72">72 h</button>
+            </div>
+          </div>
+          <div id="timelines"></div>
+          <div class="legend small">
+            <span><i class="sw bad"></i><span data-i18n="legend.failures">failures</span></span>
+            <span><i class="sw gw"></i><span data-i18n="legend.gw_rtt">router RTT</span></span>
+            <span><i class="sw net"></i><span data-i18n="legend.net_rtt">internet RTT</span></span>
+            <span><i class="sw sig"></i><span data-i18n="legend.signal">Wi-Fi signal</span></span>
+            <span><i class="sw busy"></i><span data-i18n="legend.busy">channel busy</span></span>
+            <span><i class="sw lan"></i><span data-i18n="legend.lan">LAN devices</span></span>
+          </div>
+          <div id="tl-info" class="tl-info small" data-i18n="live.tl_hint">Point at the timeline to inspect a minute.</div>
+          <div id="hourly-wrap" class="hourly-wrap" hidden>
+            <div class="sub-row">
+              <h3 class="sub" data-i18n="report.hourly">Hourly loss profile</h3>
+              <span id="hourly-tip"></span>
+            </div>
+            <div id="hourly-bars" class="hr-strip" role="img" data-i18n-aria="report.hourly" aria-label="Hourly loss profile"></div>
+          </div>
+        </section>
+
+        <section class="card-sec" aria-labelledby="h-incidents">
+          <div class="sec-head">
+            <div class="title-row"><h2 id="h-incidents" data-i18n="report.incidents">Incidents</h2><span id="inc-count" class="badge">0</span></div>
+            <span class="small muted" data-i18n="report.inc_hint">Select an incident to mark it on the timeline</span>
+          </div>
+          <ul id="incidents" class="inc-list"></ul>
+          <details class="disc" id="findings-disc">
+            <summary data-i18n="report.findings">Findings and patterns</summary>
+            <ul id="report-findings" class="findings-list"></ul>
+          </details>
+        </section>
+
+        <details class="card-sec disc-card" id="events-disc">
+          <summary class="sec-head">
+            <span class="title-row"><span class="h2" data-i18n="events.title">Events</span><span id="ev-count" class="badge">0</span></span>
+          </summary>
+          <div class="controls-row ev-controls">
+            <div class="seg" id="ev-filter" role="group" data-i18n-aria="events.filter" aria-label="Event category">
+              <button type="button" data-f="important" class="on" data-i18n="events.important">Important</button>
+              <button type="button" data-f="outages" data-i18n="events.outages">Outages</button>
+              <button type="button" data-f="wifi" data-i18n="events.wifi">Wi-Fi</button>
+              <button type="button" data-f="observer" data-i18n="events.observer">Observer</button>
+              <button type="button" data-f="security" data-i18n="events.security">Security</button>
+              <button type="button" data-f="all" data-i18n="events.all">All</button>
+            </div>
+            <label class="small muted chk"><input type="checkbox" id="ev-all"> <span data-i18n="events.details">details</span></label>
+          </div>
+          <ol id="events" class="events"></ol>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ Map ============ -->
+  <section id="tab-map" class="view" role="tabpanel" aria-labelledby="tab-btn-map" hidden>
+    <div id="map-workspace" class="map-workspace no-site">
+      <section class="card-sec" id="site-panel" aria-labelledby="h-site" hidden>
+        <div class="sec-head">
+          <h2 id="h-site" data-i18n="map.title">Measurement map</h2>
+          <div class="controls-row">
+            <div class="seg" id="site-buildings" role="group" data-i18n-aria="map.building" aria-label="Building"></div>
+            <div class="seg" id="site-color" role="group" data-i18n-aria="map.color_by" aria-label="Colour rooms by">
+              <button type="button" data-c="status" class="on" aria-pressed="true" data-i18n="map.col_status">Status</button>
+              <button type="button" data-c="availability" aria-pressed="false" data-i18n="map.col_avail">Availability</button>
+              <button type="button" data-c="drops" aria-pressed="false" data-i18n="map.col_drops">Drops/h</button>
+            </div>
+            <div class="seg" id="site-adj" role="group" data-i18n-aria="map.adj" aria-label="Show adjacent floor">
+              <button type="button" data-adj="off" class="on" aria-pressed="true" data-i18n="map.floor_only">This floor</button>
+              <button type="button" data-adj="below" aria-pressed="false" data-i18n="map.floor_below">+ below</button>
+              <button type="button" data-adj="above" aria-pressed="false" data-i18n="map.floor_above">+ above</button>
+            </div>
+          </div>
+        </div>
+        <div class="site-layout">
+          <div id="site-building" class="bv" role="group" data-i18n-aria="map.flats" aria-label="Flats of the building, top floor first"></div>
+          <div id="site"></div>
+        </div>
+        <div id="site-legend" class="legend small"></div>
+        <div id="site-info" class="site-info"></div>
+      </section>
+
+      <section class="card-sec" id="meas-panel" aria-labelledby="h-meas">
+        <div class="sec-head">
+          <div class="title-row">
+            <h2 id="h-meas" data-i18n="map.meas_title">Measurements</h2>
+            <span id="meas-mode" class="pill small neutral"></span>
+          </div>
+          <button id="meas-open" class="ctrl primary" type="button" hidden data-i18n="map.start_here">Start a measurement</button>
+        </div>
+        <h3 class="sub" data-i18n="map.meas_now">Measuring now</h3>
+        <dl id="meas-current" class="kv kv-left"></dl>
+        <p id="meas-reason" class="small muted" hidden></p>
+        <div id="meas-msg" class="msg small" role="status" aria-live="polite" hidden></div>
+        <div id="plan-box" hidden>
+          <div class="title-row plan-head">
+            <h3 class="sub" id="plan-title" data-i18n="map.plan">Plan</h3>
+            <span id="plan-sum" class="small muted"></span>
+          </div>
+          <ul id="plan-list" class="plan-list" aria-labelledby="plan-title"></ul>
+          <p id="plan-hint" class="small muted"></p>
+          <div id="plan-info" class="site-info" hidden></div>
+        </div>
+      </section>
+    </div>
+
+    <details class="card-sec disc-card" id="points-compare-panel" hidden>
+      <summary class="sec-head">
+        <span class="h2" data-i18n="map.compare">Points table</span>
+        <span class="small muted" data-i18n="map.compare_hint">Select a row to show that point</span>
+      </summary>
+      <div class="scroll">
+        <table id="points-compare" class="tbl">
+          <thead><tr><th data-i18n="map.th_point">Point</th><th data-i18n="map.th_status">Status</th><th class="num" data-i18n="map.th_measured">Measured</th><th class="num" data-i18n="map.th_avail">Availability</th><th class="num" data-i18n="map.th_drops">Drops/h</th><th class="num col-wide" data-i18n="map.th_sessions">Sessions</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </details>
+
+    <dialog id="meas-dialog" class="dialog" aria-labelledby="meas-dlg-title">
+      <form id="meas-form" class="meas-form" method="dialog">
+        <h2 id="meas-dlg-title" data-i18n="map.start_here">Start a measurement</h2>
+        <label id="meas-point-wrap" class="fld"><span data-i18n="map.f_point">Point</span>
+          <select id="meas-point" class="inp"></select>
+        </label>
+        <label id="meas-text-wrap" class="fld" hidden><span data-i18n="map.f_point">Point</span>
+          <input id="meas-point-text" class="inp" list="meas-points" maxlength="64" autocomplete="off"
+            data-i18n-ph="map.ph_point" placeholder="e.g. Living room" pattern="[A-Za-z0-9 _./\-]{1,64}">
+          <datalist id="meas-points"></datalist>
+        </label>
+        <label class="fld"><span data-i18n="map.f_label">Label</span>
+          <input id="meas-label" class="inp" maxlength="200" autocomplete="off" data-i18n-ph="map.ph_label" placeholder="e.g. Night 4">
+        </label>
+        <label class="fld"><span data-i18n="map.f_note">Note</span>
+          <input id="meas-note" class="inp" maxlength="200" autocomplete="off" data-i18n-ph="map.ph_note" placeholder="e.g. door closed">
+        </label>
+        <div id="meas-confirm" class="meas-confirm" role="group" aria-labelledby="meas-confirm-text" hidden>
+          <p id="meas-confirm-text" class="small"></p>
+        </div>
+        <div id="meas-dlg-msg" class="msg small" role="status" aria-live="polite" hidden></div>
+        <div class="dialog-actions">
+          <button id="meas-no" type="button" class="ctrl" data-i18n="map.btn_cancel">Cancel</button>
+          <button id="meas-start" type="button" class="ctrl primary" data-i18n="map.btn_next">Continue</button>
+          <button id="meas-yes" type="button" class="ctrl primary" hidden data-i18n="map.btn_yes">Yes, switch now</button>
+        </div>
+      </form>
+    </dialog>
+  </section>
+
+  <!-- ============ Diagnostics ============ -->
+  <section id="tab-diag" class="view" role="tabpanel" aria-labelledby="tab-btn-diag" hidden>
+    <nav class="chips" id="diag-nav" data-i18n-aria="diag.sections" aria-label="Sections">
+      <button type="button" class="chip" data-target="advice-panel" data-i18n="sys.advice">Recommendations</button>
+      <button type="button" class="chip" data-target="wifi-link-panel" data-i18n="diag.wifi">Wi-Fi</button>
+      <button type="button" class="chip" data-target="sys-grid" data-i18n="diag.router">Router &amp; observer</button>
+      <button type="button" class="chip" data-target="sys-events-panel" data-i18n="diag.events">Events</button>
+      <button type="button" class="chip" data-target="router-audit-panel" data-i18n="diag.audit">Audit</button>
+    </nav>
+
+    <section class="card-sec" id="advice-panel" aria-labelledby="h-advice">
+      <div class="sec-head">
+        <div class="title-row"><h2 id="h-advice" data-i18n="sys.advice">Recommendations</h2><span id="advice-count" class="badge">0</span></div>
+        <button type="button" id="advice-refresh" class="ctrl" data-i18n="sys.refresh">Refresh</button>
+      </div>
+      <ul id="advice-list" class="advice-list"></ul>
+    </section>
+
+    <section class="card-sec" id="wifi-link-panel" aria-labelledby="h-wifi-link">
+      <div class="sec-head"><h2 id="h-wifi-link" data-i18n="wifi.links">Wi-Fi links</h2></div>
+      <div id="wifi-link" class="wifi-links"></div>
+    </section>
+
+    <section class="card-sec" id="scan-panel" aria-labelledby="h-scan">
+      <div class="sec-head">
+        <h2 id="h-scan" data-i18n="wifi.env">Wi-Fi environment</h2>
+        <div class="seg" id="scan-filter" role="group" data-i18n-aria="wifi.filter" aria-label="Wi-Fi scan filter">
+          <button type="button" data-sf="all" class="on" data-i18n="wifi.all">All</button>
+          <button type="button" data-sf="ours" data-i18n="wifi.ours">Our network</button>
+          <button type="button" data-sf="interfering" data-i18n="wifi.interfering">Interfering</button>
+          <button type="button" data-sf="2.4">2.4 GHz</button>
+          <button type="button" data-sf="5">5 GHz</button>
+        </div>
+      </div>
+      <div id="scan-summary" class="scan-chips"></div>
+      <div id="scan-spectrum" class="spec-grid"></div>
+      <div id="scan-spec-info" class="tl-info small" data-i18n="wifi.spec_hint">Point at a channel arch to inspect overlapping APs.</div>
+      <div id="scan"></div>
+    </section>
+
+    <div class="sys-grid" id="sys-grid">
+      <section class="card-sec" aria-labelledby="h-sys-host">
+        <div class="sec-head"><h2 id="h-sys-host" data-i18n="sys.host">Observer &amp; session</h2></div>
+        <dl id="sys-host" class="kv"></dl>
+      </section>
+      <section class="card-sec" aria-labelledby="h-sys-router">
+        <div class="sec-head"><h2 id="h-sys-router" data-i18n="sys.router">Router (UPnP IGD)</h2></div>
+        <div id="sys-router"></div>
+      </section>
+      <section class="card-sec" aria-labelledby="h-sys-lan">
+        <div class="sec-head"><h2 id="h-sys-lan" data-i18n="sys.lan">LAN sweep</h2></div>
+        <div id="sys-lan"></div>
+      </section>
+    </div>
+
+    <section class="card-sec" id="sys-events-panel" aria-labelledby="h-sys-events">
+      <div class="sec-head">
+        <div class="title-row"><h2 id="h-sys-events" data-i18n="sys.events">Observer &amp; security events</h2><span id="sys-ev-count" class="badge">0</span></div>
+      </div>
+      <ol id="sys-events" class="events"></ol>
+    </section>
+
+    <details class="card-sec disc-card" id="router-audit-panel">
+      <summary class="sec-head">
+        <span class="title-row"><span class="h2" data-i18n="sys.audit_title">Router audit &amp; firmware CVEs</span><span id="audit-tip"></span><span id="audit-adapter" class="pill small neutral"></span></span>
+      </summary>
+      <p id="audit-token-note" class="small muted" hidden></p>
+      <div class="audit-controls">
+        <select id="audit-adapter-sel" class="ctrl" data-i18n-aria="sys.adapter" aria-label="Router probe adapter">
+          <option value="auto" data-i18n="sys.adapter_auto">Auto (UPnP / SNMP / TR-064 / OpenWrt / MikroTik / HTTP)</option>
+          <option value="upnp" data-i18n="sys.adapter_upnp">UPnP IGD (no credentials)</option>
+          <option value="snmp" data-i18n="sys.adapter_snmp">SNMP v1/v2c</option>
+          <option value="tr064" data-i18n="sys.adapter_tr064">TR-064 (HTTP Digest)</option>
+          <option value="openwrt" data-i18n="sys.adapter_openwrt">OpenWrt LuCI ubus</option>
+          <option value="mikrotik" data-i18n="sys.adapter_mikrotik">MikroTik RouterOS REST</option>
+          <option value="http" data-i18n="sys.adapter_http">HTTP banner</option>
+        </select>
+        <input id="audit-host" class="ctrl" type="text" data-i18n-ph="sys.ph_host" placeholder="Gateway IP (auto)" data-i18n-aria="sys.ph_host" aria-label="Target local IP">
+        <span id="audit-cred-fields" class="audit-creds">
+          <input id="audit-user" class="ctrl" type="text" data-i18n-ph="sys.ph_user" placeholder="Username (optional)" autocomplete="off" data-i18n-aria="sys.ph_user" aria-label="Router username">
+          <input id="audit-pass" class="ctrl" type="password" data-i18n-ph="sys.ph_pass" placeholder="Password (RAM only)" autocomplete="new-password" data-i18n-aria="sys.ph_pass" aria-label="Router password">
+        </span>
+        <span id="audit-snmp-fields" class="audit-creds" hidden>
+          <input id="audit-comm" class="ctrl" type="password" data-i18n-ph="sys.ph_comm" placeholder="SNMP community (public)" autocomplete="new-password" data-i18n-aria="sys.ph_comm" aria-label="SNMP community">
+        </span>
+        <button type="button" id="audit-probe-btn" class="ctrl primary" data-i18n="sys.btn_probe">Probe router</button>
+      </div>
+      <p id="audit-msg" class="msg small info" hidden></p>
+      <div class="audit-grid">
+        <dl id="audit-kv" class="kv"></dl>
+        <div>
+          <h3 class="sub" data-i18n="sys.ports_title">Gateway LAN ports</h3>
+          <div id="audit-ports" class="port-chips"></div>
+          <ul id="audit-warnings" class="audit-warn-list"></ul>
+        </div>
+      </div>
+      <div class="cve-box">
+        <h3 class="sub" data-i18n="sys.cve_title">Firmware CVE &amp; CISA KEV check</h3>
+        <div class="cve-controls">
+          <input id="cve-vendor" class="ctrl" type="text" data-i18n-ph="sys.ph_vendor" placeholder="Vendor (optional)" data-i18n-aria="sys.ph_vendor" aria-label="Router vendor">
+          <input id="cve-model" class="ctrl" type="text" data-i18n-ph="sys.ph_model" placeholder="Model (e.g. Archer C7)" data-i18n-aria="sys.ph_model" aria-label="Router model">
+          <input id="cve-fw" class="ctrl" type="text" data-i18n-ph="sys.ph_fw" placeholder="Firmware (optional)" data-i18n-aria="sys.ph_fw" aria-label="Firmware version">
+          <button type="button" id="cve-check-btn" class="ctrl" data-i18n="sys.btn_cve">Check CVEs</button>
+        </div>
+        <p class="small muted" data-i18n="sys.cve_hint">On-demand HTTPS lookup (CIRCL + NIST NVD + CISA KEV / offline bundle), 24 h cache</p>
+        <p id="cve-msg" class="msg small info" hidden></p>
+        <div id="cve-results"></div>
+      </div>
+    </details>
+  </section>
+</main>
+
+<script type="module" src="/js/main.js"></script>
+</body>
+</html>

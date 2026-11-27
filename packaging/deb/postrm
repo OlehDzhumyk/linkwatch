@@ -1,0 +1,11 @@
+#!/bin/sh
+set -e
+if [ -d /run/systemd/system ]; then systemctl daemon-reload || true; fi
+if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
+  echo "linkwatch: ARP/rp_filter sysctl values stay active until reboot (file removed with the package)."
+fi
+if [ "$1" = "purge" ]; then
+  # Recorded data in /var/lib/linkwatch is kept on purpose; delete it by hand if wanted.
+  getent passwd linkwatch >/dev/null && (deluser --system linkwatch >/dev/null 2>&1 || userdel linkwatch || true)
+fi
+exit 0

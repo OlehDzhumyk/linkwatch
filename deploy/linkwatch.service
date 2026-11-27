@@ -1,0 +1,49 @@
+[Unit]
+Description=linkwatch network path monitor
+Documentation=file:///usr/local/share/doc/linkwatch/README.md
+Wants=network-online.target time-sync.target
+After=network-online.target time-sync.target
+
+[Service]
+Type=notify
+ExecStart=/usr/local/bin/linkwatch --config /etc/linkwatch/linkwatch.toml run
+Restart=always
+RestartSec=3
+WatchdogSec=30
+TimeoutStopSec=20
+User=linkwatch
+Group=linkwatch
+StateDirectory=linkwatch
+StateDirectoryMode=0750
+# ICMP uses unprivileged ping sockets (net.ipv4.ping_group_range) and SO_BINDTODEVICE is
+# unprivileged since Linux 5.7, so no CAP_NET_RAW. CAP_NET_ADMIN is only for triggering
+# active Wi-Fi scans; remove both lines to run fully unprivileged (cached scans only).
+AmbientCapabilities=CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_ADMIN
+NoNewPrivileges=yes
+UMask=0027
+PrivateDevices=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK AF_UNIX
+LockPersonality=yes
+MemoryMax=256M
+Nice=-5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,106 @@
+# Release workflow: verifies everything cleanly, builds static Linux musl binaries +
+# Debian packages (.deb) for amd64 and arm64, computes SHA256SUMS, and publishes a GitHub Release.
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify tag matches Cargo.toml version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          ver=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          tag=${GITHUB_REF_NAME#v}
+          test "$ver" = "$tag" || { echo "Tag $GITHUB_REF_NAME != Cargo.toml $ver"; exit 1; }
+      - name: Web UI check, build & strict CSP audit
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run check
+          npm run build
+          ! grep -rnE "innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|style=|\.style\." src/web/ui/src src/web/ui/index.html
+          git diff --exit-code -- src/web/ui/dist
+          test -z "$(git status --porcelain -- src/web/ui/dist)"
+      - name: Toolchain & Rust checks
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy,rustfmt
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked --release
+          git diff --exit-code -- src/web/ui/src/api
+          test -z "$(git status --porcelain -- src/web/ui/src/api)"
+
+  release:
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install musl targets
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
+      - name: Build multi-arch static releases (.deb + .tar.gz)
+        run: |
+          ver=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          RUST_LLD=$(find "$(rustc --print sysroot)" -name rust-lld -type f | head -n1)
+          test -x "$RUST_LLD"
+          export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER="$RUST_LLD"
+          export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER="$RUST_LLD"
+
+          cargo build --locked --release --target x86_64-unknown-linux-musl
+          cargo build --locked --release --target aarch64-unknown-linux-musl
+
+          mkdir -p dist-release
+          for pair in "x86_64-unknown-linux-musl:amd64" "aarch64-unknown-linux-musl:arm64"; do
+            target=${pair%%:*}
+            arch=${pair##*:}
+            bin="target/$target/release/linkwatch"
+            packaging/build-deb.sh "$bin" "$arch" dist-release
+
+            stage=$(mktemp -d)
+            pkg="$stage/linkwatch_${ver}_linux_${arch}"
+            mkdir -p "$pkg/examples" "$pkg/docs"
+            cp "$bin" "$pkg/linkwatch"
+            chmod 0755 "$pkg/linkwatch"
+            cp README.md LICENSE.md CHANGELOG.md "$pkg/"
+            cp examples/linkwatch.toml examples/site.toml "$pkg/examples/"
+            cp docs/FEATURES.md docs/I18N.md "$pkg/docs/"
+            cp -r deploy "$pkg/deploy"
+            tar -C "$stage" -czf "dist-release/linkwatch_${ver}_linux_${arch}.tar.gz" "linkwatch_${ver}_linux_${arch}"
+            rm -rf "$stage"
+          done
+
+          (cd dist-release && sha256sum * > SHA256SUMS.txt)
+          ls -lh dist-release
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ver=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          tag=${GITHUB_REF_NAME:-v$ver}
+          [[ "$tag" == v* ]] || tag="v$ver"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" dist-release/* --clobber
+          else
+            gh release create "$tag" dist-release/* --title "linkwatch $tag" --generate-notes
+          fi

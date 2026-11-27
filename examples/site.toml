@@ -1,0 +1,122 @@
+# Example site layout for linkwatch (fictional).
+#
+# Two small blocks with four flats each (two flats per floor, floors 0..1).
+# Coordinates are metres: x to the right, y downwards, origin at the top-left
+# corner of each flat. Left-handed and right-handed flats each have their own unit type.
+#
+# Point ids are "<building>/<unit>/<point>", e.g. "B1/F2/R3". Every room id is
+# also a point at the room centre. Use a point id in the main config:
+#   [site]
+#   file = "/etc/linkwatch/site.toml"
+#   point = "B1/F2/R3"
+
+[[unit_type]]
+id = "flat-3bed-right"
+name = "Flat with three bedrooms (kitchen right)"
+width_m = 10.0
+depth_m = 8.0
+rooms = [
+  { id = "R1", name = "Bedroom 1", rect = [0.0, 0.0, 3.0, 3.5] },
+  { id = "R2", name = "Bedroom 2", rect = [3.0, 0.0, 3.0, 3.5] },
+  { id = "H",  name = "Hall",      rect = [0.0, 3.5, 6.0, 1.5] },
+  { id = "R3", name = "Bedroom 3", rect = [0.0, 5.0, 3.0, 3.0] },
+  { id = "K",  name = "Kitchen / living", rect = [6.0, 0.0, 4.0, 8.0] },
+]
+fixed = [
+  { name = "Bathroom", rect = [3.0, 5.0, 3.0, 3.0] },
+]
+points = [
+  { id = "router", name = "Router", at = [9.7, 7.7], kind = "router" },
+]
+walls = [
+  { from = [0.0, 0.0], to = [10.0, 0.0], material = "concrete", thickness_cm = 25 },
+  { from = [10.0, 0.0], to = [10.0, 8.0], material = "concrete", thickness_cm = 25 },
+  { from = [10.0, 8.0], to = [0.0, 8.0], material = "concrete", thickness_cm = 25 },
+  { from = [0.0, 8.0], to = [0.0, 0.0], material = "concrete", thickness_cm = 25 },
+  { from = [3.0, 0.0], to = [3.0, 3.5], material = "drywall" },
+  { from = [0.0, 3.5], to = [6.0, 3.5], material = "drywall" },
+  { from = [0.0, 5.0], to = [6.0, 5.0], material = "drywall" },
+  { from = [3.0, 5.0], to = [3.0, 8.0], material = "brick" },
+  { from = [6.0, 0.0], to = [6.0, 8.0], material = "brick" },
+]
+doors = [
+  { from = [0.0, 3.8], to = [0.0, 4.7], swing = "left", kind = "exit", label = "Exit" },
+  { from = [2.0, 3.5], to = [2.8, 3.5], swing = "left" },
+  { from = [5.0, 3.5], to = [5.8, 3.5], swing = "left" },
+  { from = [2.0, 5.0], to = [2.8, 5.0], swing = "right" },
+  { from = [6.0, 3.8], to = [6.0, 4.7], swing = "right" },
+]
+
+[[unit_type]]
+id = "flat-3bed-left"
+name = "Flat with three bedrooms (kitchen left)"
+width_m = 10.0
+depth_m = 8.0
+rooms = [
+  { id = "R1", name = "Bedroom 1", rect = [7.0, 0.0, 3.0, 3.5] },
+  { id = "R2", name = "Bedroom 2", rect = [4.0, 0.0, 3.0, 3.5] },
+  { id = "H",  name = "Hall",      rect = [4.0, 3.5, 6.0, 1.5] },
+  { id = "R3", name = "Bedroom 3", rect = [7.0, 5.0, 3.0, 3.0] },
+  { id = "K",  name = "Kitchen / living", rect = [0.0, 0.0, 4.0, 8.0] },
+]
+fixed = [
+  { name = "Bathroom", rect = [4.0, 5.0, 3.0, 3.0] },
+]
+points = [
+  { id = "router", name = "Router", at = [0.3, 7.7], kind = "router" },
+]
+walls = [
+  { from = [0.0, 0.0], to = [10.0, 0.0], material = "concrete", thickness_cm = 25 },
+  { from = [10.0, 0.0], to = [10.0, 8.0], material = "concrete", thickness_cm = 25 },
+  { from = [10.0, 8.0], to = [0.0, 8.0], material = "concrete", thickness_cm = 25 },
+  { from = [0.0, 8.0], to = [0.0, 0.0], material = "concrete", thickness_cm = 25 },
+  { from = [7.0, 0.0], to = [7.0, 3.5], material = "drywall" },
+  { from = [4.0, 3.5], to = [10.0, 3.5], material = "drywall" },
+  { from = [4.0, 5.0], to = [10.0, 5.0], material = "drywall" },
+  { from = [7.0, 5.0], to = [7.0, 8.0], material = "brick" },
+  { from = [4.0, 0.0], to = [4.0, 8.0], material = "brick" },
+]
+doors = [
+  { from = [10.0, 3.8], to = [10.0, 4.7], swing = "right", kind = "exit", label = "Exit" },
+  { from = [8.0, 3.5], to = [7.2, 3.5], swing = "right" },
+  { from = [5.0, 3.5], to = [4.2, 3.5], swing = "right" },
+  { from = [8.0, 5.0], to = [7.2, 5.0], swing = "left" },
+  { from = [4.0, 3.8], to = [4.0, 4.7], swing = "left" },
+]
+
+[[building]]
+id = "B1"
+name = "Block A"
+units = [
+  { id = "F1", type = "flat-3bed-right", floor = 0, label = "Flat 1" },
+  { id = "F2", type = "flat-3bed-left",  floor = 0, label = "Flat 2" },
+  { id = "F3", type = "flat-3bed-right", floor = 1, label = "Flat 3" },
+  { id = "F4", type = "flat-3bed-left",  floor = 1, label = "Flat 4" },
+]
+
+[[building]]
+id = "B2"
+name = "Block B"
+units = [
+  { id = "F1", type = "flat-3bed-right", floor = 0, label = "Flat 1" },
+  { id = "F2", type = "flat-3bed-left",  floor = 0, label = "Flat 2" },
+  { id = "F3", type = "flat-3bed-right", floor = 1, label = "Flat 3" },
+  { id = "F4", type = "flat-3bed-left",  floor = 1, label = "Flat 4" },
+]
+
+# Measurement plan (optional): where to measure and for how long. The web UI shows a
+# checklist with progress and colours the plan by status. `hours` is 0 < hours <= 168;
+# each point once. Sessions shorter than 60 s do not count.
+[[plan]]
+point = "B1/F2/R3"
+hours = 8.0
+note = "Bedroom far from the router"
+
+[[plan]]
+point = "B1/F2/K"
+hours = 8.0
+note = "Next to the router, for comparison"
+
+[[plan]]
+point = "B1/F2/R1"
+hours = 6.0

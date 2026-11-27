@@ -1,0 +1,29 @@
+#!/bin/sh
+set -e
+if [ "$1" = "configure" ]; then
+  if ! getent passwd linkwatch >/dev/null; then
+    adduser --system --group --no-create-home --home /var/lib/linkwatch --quiet linkwatch 2>/dev/null \
+      || useradd --system --user-group --no-create-home --shell /usr/sbin/nologin linkwatch
+  fi
+  # The config may hold the web token: readable by root and the service group only.
+  if [ -f /etc/linkwatch/linkwatch.toml ]; then
+    chgrp linkwatch /etc/linkwatch/linkwatch.toml && chmod 0640 /etc/linkwatch/linkwatch.toml
+  fi
+  # Apply only our own sysctl file (not every file in /etc/sysctl.d).
+  sysctl -p /etc/sysctl.d/90-linkwatch.conf >/dev/null 2>&1 || true
+  if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload
+    systemctl enable linkwatch.service >/dev/null 2>&1 || true
+    if [ -z "$2" ]; then
+      # First install: do not start. The monitor sends traffic (probes, speed tests) on every
+      # interface; the admin reviews /etc/linkwatch/linkwatch.toml and runs `linkwatch check` first.
+      echo "linkwatch: installed and enabled, not started. Edit /etc/linkwatch/linkwatch.toml, run"
+      echo "  sudo -u linkwatch linkwatch --config /etc/linkwatch/linkwatch.toml check"
+      echo "then: sudo systemctl start linkwatch"
+    else
+      # Upgrade: restart only when it was running; the session continues (same point/config).
+      systemctl try-restart linkwatch.service || echo "linkwatch: service did not restart, see: journalctl -u linkwatch"
+    fi
+  fi
+fi
+exit 0

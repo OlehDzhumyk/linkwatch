@@ -1,0 +1,157 @@
+# Example linkwatch configuration.
+#
+# Every field is optional: an empty file uses the built-in defaults.
+# The values below show the defaults unless a comment says otherwise.
+# Addresses in this file are documentation examples (192.0.2.0/24,
+# 198.51.100.0/24, 203.0.113.0/24, example.com, example.net); replace
+# them with your own or delete the lines to keep the defaults.
+
+# Root directory for all sessions. Each run writes <data_dir>/<session>/.
+data_dir = "/var/lib/linkwatch"
+
+# Measurement profile: "light" (5 s ticks, for small boards), "standard" (1 s),
+# "detailed" (0.5 s, Wi-Fi statistics every second). It sets every [intervals]
+# value; uncomment a value in [intervals] to override just that one.
+profile = "standard"
+
+# Interfaces to monitor. When the list is empty, linkwatch picks the
+# physical interfaces it finds. role = "wifi" | "ethernet" | "other";
+# omit role to detect it from sysfs.
+[[interfaces]]
+name = "wlan0"
+role = "wifi"
+
+[[interfaces]]
+name = "eth0"
+# role is detected when omitted
+
+[targets]
+# Router address. Omit to use the default gateway of each interface.
+# gateway = "192.168.1.1"
+# First hop inside the ISP network. Omit to discover it automatically
+# (when isp_hop_auto = true).
+# isp_hop = "198.51.100.1"
+isp_hop_auto = true
+# ICMP targets on the internet. The internet counts as "down" only when
+# ALL of them fail. Omit to use the built-in public resolvers.
+# internet = ["203.0.113.10", "203.0.113.20", "203.0.113.30"]
+# TCP connect targets (ICMP can be filtered or rate-limited).
+# tcp = ["203.0.113.10:443", "203.0.113.20:443"]
+# DNS servers to query. Empty = the system resolvers from /etc/resolv.conf.
+dns_servers = []
+# Name to resolve in each DNS probe.
+dns_name = "example.com"
+
+[intervals]
+# Probe tick in milliseconds (minimum 200).
+# probe_ms = 1000
+# Timeout of each probe; must be smaller than probe_ms.
+# probe_timeout_ms = 900
+# DNS probe interval in seconds.
+# dns_s = 10
+# TCP connect probe interval in seconds.
+# tcp_s = 5
+# Wi-Fi station statistics interval in seconds.
+# wifi_s = 10
+# Channel survey (busy time) interval in seconds.
+# survey_s = 10
+# Active scan of neighbour networks in seconds. 0 = off.
+# Triggering a scan needs CAP_NET_ADMIN; without it only cached results are read.
+# scan_s = 900
+# Heartbeat interval in seconds (used to measure gaps after a crash or power loss).
+# heartbeat_s = 10
+# Interval to discover the ISP hop again, in seconds.
+# isp_rediscover_s = 600
+# Host health sampling interval (CPU, RAM, disk, temperature, throttling) in seconds. 0 = off.
+# host_s = 10
+# Active LAN device count interval in seconds (0 = off; minimum 60).
+# Sends one echo per host on subnets up to /22; keeps counts only, never addresses or MACs.
+# lan_s = 0
+
+[classify]
+# Consecutive ticks with the same state before a state change is recorded.
+debounce = 3
+# Window (ticks) for loss and latency evaluation.
+window = 30
+# Loss in percent above which a path is "degraded".
+degraded_loss_pct = 2.0
+# Router RTT in ms above which a path is "degraded".
+degraded_gw_rtt_ms = 50.0
+# Internet RTT in ms above which a path is "degraded".
+degraded_net_rtt_ms = 150.0
+
+[speed]
+# Periodic download speed tests.
+enabled = true
+# Plain http:// URLs of large files, tried in order until one works.
+# Omit to use the built-in list.
+# urls = ["http://speed.example.net/50MB.bin"]
+# Stop each test after this many bytes (300 MiB).
+max_bytes = 314572800
+# Whole request limit per URL (DNS, connect, headers, body), seconds.
+timeout_s = 30
+# Time-based test: read the body for this many seconds after its first byte.
+duration_s = 8
+# The first part of the body is TCP warm-up and is not counted in mbps (milliseconds).
+warmup_ms = 1500
+# Interval between tests in minutes (outside the peak window).
+interval_min = 60
+# Peak window in local time "HH:MM". The end can be before the start (wraps midnight).
+peak_start = "18:00"
+peak_end = "00:00"
+# Interval between tests in minutes inside the peak window.
+peak_interval_min = 30
+# Delay of the first test after start, in seconds.
+first_after_s = 60
+
+[web]
+# Web UI and JSON API. If the port is in use, the monitor logs an error and keeps running.
+enabled = true
+# Local only by default. For the LAN use "0.0.0.0:8080" and set a token below.
+listen = "127.0.0.1:8080"
+# Access token (16+ characters of A-Z a-z 0-9 _ -). Open http://<device>:8080/?token=<token> once;
+# the browser keeps it in a cookie. Scripts can send "Authorization: Bearer <token>".
+# token = "change-me-to-a-long-random-string"
+# With a token: "token" = only token holders may view (default); "open" = anyone on the
+# network may view, but measurement control, router probes and CVE lookups still need the token.
+# view = "token"
+
+[site]
+# Optional site layout (see examples/site.toml).
+# file = "/etc/linkwatch/site.toml"
+# Observation point of this session: "<building>/<unit>/<point or room>".
+# point = "B1/F2/R3"
+# Free text label shown in the UI.
+# label = "Bedroom test, night 1"
+
+[storage]
+# Below this many free bytes: stop writing samples and Wi-Fi records, keep events (200 MiB).
+min_free_bytes = 209715200
+# Below this: write nothing, log only (20 MiB).
+critical_free_bytes = 20971520
+# fsync interval for open files, in seconds.
+fsync_s = 5
+# Queue size between producers and the writer. When full, records are dropped and counted.
+queue = 4096
+# Compress the files of previous days.
+compress_old = true
+
+[router]
+# Optional read-only UPnP IGD router telemetry (disabled by default).
+# Polls WAN link status, uptime, and total WAN byte/packet counters without credentials.
+enabled = false
+upnp = true
+# Explicit device description XML URL (omit for SSDP discovery on the default gateway).
+# upnp_url = "http://192.168.1.1:49152/IGDdevicedesc.xml"
+interval_s = 15
+# Optional NIST NVD API key for higher rate limits on manual UI CVE lookups.
+# nvd_api_key = "your-nvd-api-key"
+
+[alerts]
+# Optional webhook / ntfy notifications (disabled by default).
+# enabled = false
+# webhook_url = "https://ntfy.example.com/linkwatch"
+# bearer_token = "optional-token"
+# min_outage_s = 60
+# security_events = true
+# cooldown_s = 300

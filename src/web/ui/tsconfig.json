@@ -1,0 +1,35 @@
+{
+  // Web UI: src/*.ts -> dist/*.js as plain ES modules (no bundler). The browser loads
+  // dist/main.js, which imports its siblings by relative path, so every relative import
+  // must name the compiled file: `import { x } from "./dom.js"`.
+  // src/api/ holds TypeScript bindings generated from the Rust API types (ts-rs, `cargo test`).
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": [],
+    "rootDir": "src",
+    "outDir": "dist",
+    "newLine": "lf",
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "useUnknownInCatchVariables": true,
+    "allowUnreachableCode": false,
+    "allowUnusedLabels": false,
+
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "erasableSyntaxOnly": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": false
+  },
+  "include": ["src/**/*.ts"]
+}

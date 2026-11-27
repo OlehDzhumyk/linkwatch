@@ -1,0 +1,15 @@
+{
+  "name": "linkwatch-ui",
+  "private": true,
+  "description": "Build of the linkwatch web UI (TypeScript to ES modules). The compiled files in src/web/ui/dist are committed, so cargo builds need no Node.",
+  "license": "SEE LICENSE IN LICENSE.md",
+  "type": "module",
+  "scripts": {
+    "build": "npm run clean && tsc -p src/web/ui && node -e \"require('fs').rmSync('src/web/ui/dist/api',{recursive:true,force:true})\"",
+    "clean": "node -e \"require('fs').rmSync('src/web/ui/dist',{recursive:true,force:true})\"",
+    "check": "tsc -p src/web/ui --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2"
+  }
+}

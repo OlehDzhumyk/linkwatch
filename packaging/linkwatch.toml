@@ -1,0 +1,40 @@
+# linkwatch configuration. All fields are optional; an empty file uses the defaults.
+# Full commented reference: /usr/share/doc/linkwatch/examples/linkwatch.toml
+# After a change: sudo systemctl restart linkwatch
+
+profile = "standard"          # light | standard | detailed
+data_dir = "/var/lib/linkwatch"
+
+# Without [[interfaces]] all physical interfaces are monitored.
+# [[interfaces]]
+# name = "wlan0"
+# role = "wifi"
+# [[interfaces]]
+# name = "eth0"
+# role = "ethernet"
+
+[web]
+# Local only. To open the UI from other devices use "0.0.0.0:8080" AND set a token
+# (16+ characters of A-Z a-z 0-9 _ -), then open http://<device>:8080/?token=<token> once.
+listen = "127.0.0.1:8080"
+# token = "change-me-to-a-long-random-string"
+
+[speed]
+# Time-based download test (about 8 s per interface; at 300 Mbit/s that is ~300 MB per test).
+# Every 60 min, every 30 min in the evening peak. Set enabled = false to save traffic.
+enabled = true
+
+[intervals]
+# Host health sampling interval in seconds (0 = off).
+host_s = 10
+# Active LAN device count interval in seconds (0 = off; e.g. 600 for every 10 min, counts only).
+# lan_s = 0
+
+[storage]
+compress_old = false
+
+[router]
+# Optional read-only UPnP IGD telemetry (off by default).
+enabled = false
+upnp = true
+interval_s = 15

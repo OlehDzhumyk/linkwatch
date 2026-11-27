@@ -1,0 +1,607 @@
+use super::*;
+use super::detect::*;
+use super::engine::*;
+
+fn env(ts: DateTime<Utc>, rec: Record) -> Envelope {
+    Envelope { v: 1, run: "r".into(), seq: 0, ts, mono_ns: 0, rec }
+}
+fn samp(iface: &str, role: IfaceRole, state: PathState, gw_rtt: f64) -> Record {
+    Record::Sample(Sample {
+        iface: iface.into(),
+        role,
+        link: LinkState::default(),
+        gw: Some(if is_bad(state) { ProbeResult::fail("timeout") } else { ProbeResult::ok(gw_rtt) }),
+        isp: None,
+        net: MultiResult { ok: if is_bad(state) { 0 } else { 3 }, of: 3, rtt_ms: Some(15.0) },
+        tcp: None,
+        dns: None,
+        rx_delta: 0,
+        tx_delta: 0,
+        state,
+        speedtest_active: false,
+        overrun: false,
+        scan_active: false,
+        t: None,
+        freq_mhz: None,
+    })
+}
+
+#[test]
+fn episodes_merge_and_cause() {
+    let t0 = DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+    let mut a = Analyzer::new(Opts::default());
+    for i in 0..600 {
+        let t = t0 + Duration::seconds(i);
+        // Wi-Fi: outage 100..110 and a blip at 300; cable always fine.
+        let w = if (100..110).contains(&i) || i == 300 || i == 103 { PathState::LanDown } else { PathState::Ok };
+        a.push(&env(t, samp("wlo1", IfaceRole::Wifi, w, 3.0)));
+        // Cable: outage 400..420 together with Wi-Fi below.
+        let c = if (400..420).contains(&i) { PathState::IspDown } else { PathState::Ok };
+        a.push(&env(t, samp("eth0", IfaceRole::Ethernet, c, 1.0)));
+        if (400..420).contains(&i) {
+            // Overwrite Wi-Fi with line failure as well (second sample same tick is fine for the test).
+            a.push(&env(t, samp("wlo1", IfaceRole::Wifi, PathState::IspDown, 3.0)));
+        }
+    }
+    let r = a.finish(&[]);
+    let w: Vec<&Episode> = r.episodes.iter().filter(|e| e.iface == "wlo1").collect();
+    assert_eq!(w.len(), 3, "{w:#?}");
+    assert_eq!(w[0].cause, Some(Verdict::WifiProblem));
+    assert!((w[0].duration_s - 10.0).abs() < 1.1);
+    assert_eq!(w[1].duration_s, 1.0); // micro-drop
+    assert_eq!(w[2].cause, Some(Verdict::LineProblem));
+    let wi = r.ifaces.iter().find(|i| i.iface == "wlo1").unwrap();
+    assert_eq!(wi.micro_drops, 1);
+    assert_eq!(wi.episodes, 2);
+}
+
+#[test]
+fn unplugged_cable_is_not_an_outage_and_not_a_witness() {
+    let t0 = DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+    let mut a = Analyzer::new(Opts::default());
+    for i in 0..120 {
+        let t = t0 + Duration::seconds(i);
+        let w = if (50..60).contains(&i) { PathState::LanDown } else { PathState::Ok };
+        a.push(&env(t, samp("wlo1", IfaceRole::Wifi, w, 3.0)));
+        a.push(&env(t, samp("eth0", IfaceRole::Ethernet, PathState::LinkDown, 1.0)));
+    }
+    let r = a.finish(&[]);
+    assert!(r.episodes.iter().all(|e| e.iface == "wlo1"));
+    assert_eq!(r.episodes[0].cause, Some(Verdict::SinglePath));
+    assert!(r.findings.iter().any(|f| f.contains("never had link")));
+}
+
+#[test]
+fn wifi_disassociation_is_a_wifi_outage() {
+    let t0 = DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+    let mut a = Analyzer::new(Opts::default());
+    for i in 0..120 {
+        let t = t0 + Duration::seconds(i);
+        let w = if (50..60).contains(&i) { PathState::LinkDown } else { PathState::Ok };
+        a.push(&env(t, samp("wlo1", IfaceRole::Wifi, w, 3.0)));
+        a.push(&env(t, samp("eth0", IfaceRole::Ethernet, PathState::Ok, 1.0)));
+    }
+    let r = a.finish(&[]);
+    assert_eq!(r.episodes.len(), 1, "{:?}", r.episodes);
+    assert_eq!(r.episodes[0].cause, Some(Verdict::WifiProblem));
+    assert_eq!(r.incidents.get("wifi_problem"), Some(&1));
+}
+
+#[test]
+fn durations_follow_the_probe_interval() {
+    let t0 = DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+    let meta = SessionMeta {
+        v: 1,
+        session: "s".into(),
+        started: t0,
+        host: "h".into(),
+        version: "0".into(),
+        point: None,
+        label: None,
+        note: None,
+        config: serde_json::json!({"intervals": {"probe_ms": 5000}}),
+        host_id: None,
+        tz_offset_s: None,
+        clock_synced: None,
+        network: None,
+    };
+    let o = Opts::for_session(Some(&meta));
+    assert_eq!(o.tick_s, 5.0);
+    let mut a = Analyzer::new(o);
+    for i in 0..40 {
+        let t = t0 + Duration::seconds(i * 5);
+        // Three bad ticks in a row = 15 s, not 11 s and not a micro-drop.
+        let w = if (10..13).contains(&i) { PathState::LanDown } else { PathState::Ok };
+        a.push(&env(t, samp("wlo1", IfaceRole::Wifi, w, 3.0)));
+    }
+    let r = a.finish(&[]);
+    assert_eq!(r.episodes.len(), 1);
+    assert!((r.episodes[0].duration_s - 15.0).abs() < 1e-6, "{:?}", r.episodes[0]);
+    assert_eq!(r.ifaces[0].micro_drops, 0);
+    assert!(r.findings.iter().any(|f| f.contains("Time resolution")));
+}
+
+#[test]
+fn joint_outage_is_one_incident_and_blips_do_not_flip_cause() {
+    let t0 = DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+    let mut a = Analyzer::new(Opts::default());
+    for i in 0..200 {
+        let t = t0 + Duration::seconds(i);
+        let both = (50..70).contains(&i);
+        let w = if both || (120..140).contains(&i) { PathState::IspDown } else { PathState::Ok };
+        // Cable: the same line outage, plus a 1-tick blip inside the Wi-Fi-only outage.
+        let c = if both { PathState::IspDown } else if i == 130 { PathState::LanDown } else { PathState::Ok };
+        a.push(&env(t, samp("wlo1", IfaceRole::Wifi, if (120..140).contains(&i) { PathState::LanDown } else { w }, 3.0)));
+        a.push(&env(t, samp("eth0", IfaceRole::Ethernet, c, 1.0)));
+    }
+    let r = a.finish(&[]);
+    assert_eq!(r.incidents.get("line_problem"), Some(&1), "{:?}", r.incidents);
+    let w2 = r.episodes.iter().find(|e| e.iface == "wlo1" && e.start > t0 + Duration::seconds(100)).unwrap();
+    assert_eq!(w2.cause, Some(Verdict::WifiProblem));
+}
+
+#[test]
+fn stalls_and_latency_under_load() {
+    let t0 = DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+    let mut a = Analyzer::new(Opts::default());
+    for i in 0..100 {
+        let t = t0 + Duration::seconds(i);
+        let rtt = if i == 40 || i == 41 { 600.0 } else { 3.0 };
+        let mut rec = samp("wlo1", IfaceRole::Wifi, PathState::Ok, rtt);
+        if let Record::Sample(s) = &mut rec
+            && (70..80).contains(&i) {
+                s.speedtest_active = true;
+                s.net.rtt_ms = Some(400.0);
+            }
+        a.push(&env(t, rec));
+    }
+    let r = a.finish(&[]);
+    assert_eq!(r.ifaces[0].stalls, 1);
+    assert_eq!(r.ifaces[0].loaded_net_rtt_med, Some(400.0));
+    assert!(r.findings.iter().any(|f| f.contains("bufferbloat")), "{:?}", r.findings);
+}
+
+#[test]
+fn router_log_parsing_and_match() {
+    let text = "1\t01/02/2026 03:04:05\t84000500\tCritical\tSYNC Timing Synchronization failure - Loss of Sync;CM-MAC=02:00:00:00:00:01\nno date here\n";
+    let lines = parse_router_log(text);
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0].priority, "Critical");
+    assert!(lines[0].text.starts_with("SYNC Timing"));
+}
+
+#[test]
+fn anomalies_detected() {
+    let t0 = DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+    let mut series: Vec<(DateTime<Utc>, f64)> = (0..120).map(|i| (t0 + Duration::minutes(i), 3.0 + (i % 3) as f64 * 0.2)).collect();
+    series[60].1 = 80.0;
+    series[61].1 = 90.0;
+    let an = robust_anomalies("w", "router RTT ms", &series, 4.0, 1.0);
+    assert_eq!(an.len(), 1);
+    assert_eq!(an[0].peak, 90.0);
+}
+
+#[test]
+fn periodic_pattern_found() {
+    let t0 = DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+    let eps: Vec<Episode> = (0..6)
+        .map(|i| Episode {
+            iface: "w".into(),
+            role: IfaceRole::Wifi,
+            start: t0 + Duration::minutes(30 * i),
+            end: t0 + Duration::minutes(30 * i) + Duration::seconds(5),
+            duration_s: 5.0,
+            ticks: 5,
+            state: PathState::LanDown,
+            cause: None,
+            origin: IncidentOrigin::Network,
+            band: None,
+            context: vec![],
+            context_msg: vec![],
+        })
+        .collect();
+    let p = patterns(&eps, 2.5);
+    assert!(p.iter().any(|x| x.text.contains("every 30 min")), "{p:?}");
+}
+
+#[test]
+fn observer_incidents_excluded_and_disconnect_reason_recorded() {
+    let t0 = DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+    let mut a = Analyzer::new(Opts::default());
+    for i in 0..100 {
+        let t = t0 + Duration::seconds(i);
+        // Scan-induced 4s outage (observer) at i=20..24.
+        let mut r = samp("wlo1", IfaceRole::Wifi, if (20..24).contains(&i) { PathState::LanDown } else { PathState::Ok }, 3.0);
+        if let Record::Sample(s) = &mut r && (20..24).contains(&i) {
+            s.scan_active = true;
+        }
+        a.push(&env(t, r));
+        // Real network outage at i=60..66.
+        let w2 = if (60..66).contains(&i) { PathState::LinkDown } else { PathState::Ok };
+        a.push(&env(t, samp("wlo1", IfaceRole::Wifi, w2, 3.0)));
+        a.push(&env(t, samp("eth0", IfaceRole::Ethernet, PathState::Ok, 1.0)));
+    }
+    a.push(&env(
+        t0 + Duration::seconds(60),
+        Record::Event(EventKind::WifiDisconnect {
+            iface: "wlo1".into(),
+            bssid: Some("02:00:00:00:00:01".into()),
+            reason_code: Some(4),
+            reason: Some("inactivity".into()),
+            by_ap: Some(true),
+            timed_out: false,
+        }),
+    ));
+    let r = a.finish(&[]);
+    assert_eq!(r.observer_incidents, 1, "{r:#?}");
+    assert_eq!(r.network_incidents, 1, "{r:#?}");
+    assert_eq!(r.incidents.get("wifi_problem"), Some(&1));
+    let wlo1 = r.ifaces.iter().find(|i| i.iface == "wlo1").unwrap();
+    assert_eq!(wlo1.episodes, 1, "observer scan must be excluded from IfaceReport.episodes");
+    assert_eq!(wlo1.ticks, 196);
+    assert!((wlo1.down_s - 6.0).abs() < 0.01);
+    // 200 pushed wlo1 ticks total (2 per second in the loop): 4 scan ticks excluded -> 196 effective ticks, 6 real bad ticks.
+    assert!((wlo1.availability_pct - (190.0 / 196.0 * 100.0)).abs() < 0.05, "avail={}", wlo1.availability_pct);
+    let net_ep = r.episodes.iter().find(|e| e.origin == IncidentOrigin::Network).unwrap();
+    assert!(net_ep.context.iter().any(|c| c.contains("reason 4 inactivity, by AP")), "{:?}", net_ep.context);
+}
+
+#[test]
+fn per_band_stats_retry_rates_and_security() {
+    let t0 = DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+    let mut a = Analyzer::new(Opts::default());
+    for i in 0..40 {
+        let t = t0 + Duration::seconds(i);
+        let freq = if i < 20 { 2437 } else { 5180 };
+        let mut rec = samp("wlo1", IfaceRole::Wifi, if i == 10 { PathState::LanDown } else { PathState::Ok }, 4.0);
+        if let Record::Sample(s) = &mut rec {
+            s.freq_mhz = Some(freq);
+        }
+        a.push(&env(t, rec));
+    }
+    // Retries across 20 s, including a counter reset in the middle.
+    for (sec, retries, failed) in [(0, 100, 0), (10, 200, 2), (20, 50, 1)] {
+        a.push(&env(
+            t0 + Duration::seconds(sec),
+            Record::Wifi(WifiStation {
+                iface: "wlo1".into(),
+                connected: true,
+                freq_mhz: Some(5180),
+                channel: Some(36),
+                tx_retries: Some(retries),
+                tx_failed: Some(failed),
+                power_save: Some(true),
+                ..Default::default()
+            }),
+        ));
+    }
+    a.push(&env(
+        t0 + Duration::seconds(5),
+        Record::Event(EventKind::Security {
+            detector: "evil_twin".into(),
+            severity: "medium".into(),
+            iface: Some("wlo1".into()),
+            detail: "unknown BSSID".into(),
+        }),
+    ));
+    let r = a.finish(&[]);
+    assert_eq!(r.ifaces[0].bands.len(), 2);
+    assert_eq!(r.ifaces[0].tx_failed_total, 3);
+    assert!(r.ifaces[0].retry_rate_per_min.unwrap() > 400.0);
+    assert_eq!(r.security_events.len(), 1);
+    assert!(r.observer_findings.iter().any(|f| f.contains("power-save")));
+    assert!(r.findings.iter().any(|f| f.contains("per-band Wi-Fi comparison")));
+}
+
+#[test]
+fn throttling_driver_reset_and_corroborated_outage_attribution() {
+    let t0 = DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+    let mut a = Analyzer::new(Opts::default());
+    for i in 0..150 {
+        let t = t0 + Duration::seconds(i);
+        let w_bad = (20..25).contains(&i) || (60..66).contains(&i) || (100..105).contains(&i);
+        let e_bad = (60..66).contains(&i);
+        a.push(&env(
+            t,
+            samp(
+                "wlo1",
+                IfaceRole::Wifi,
+                if w_bad { PathState::WanDown } else { PathState::Ok },
+                3.0,
+            ),
+        ));
+        a.push(&env(
+            t,
+            samp(
+                "eth0",
+                IfaceRole::Ethernet,
+                if e_bad { PathState::WanDown } else { PathState::Ok },
+                1.0,
+            ),
+        ));
+    }
+    // Single-path throttling/undervoltage around i=20..25 -> Observer.
+    a.push(&env(
+        t0 + Duration::seconds(20),
+        Record::Host(HostSample {
+            throttled: true,
+            temp_c: Some(96.0),
+            rpi_throttled: Some(0x1),
+            ..Default::default()
+        }),
+    ));
+    a.push(&env(
+        t0 + Duration::seconds(20),
+        Record::Event(EventKind::HostAlert {
+            alert: "undervoltage".into(),
+            detail: "rpi_throttled=0x1".into(),
+        }),
+    ));
+    // Corroborated dual-path WAN outage around i=60..66 while warm/throttled (not undervolt) -> stays Network!
+    a.push(&env(
+        t0 + Duration::seconds(62),
+        Record::Host(HostSample {
+            throttled: true,
+            temp_c: Some(96.0),
+            ..Default::default()
+        }),
+    ));
+    // Unrelated eth0 driver_reset near i=100..105 must NOT mask wlo1 outage as Observer.
+    a.push(&env(
+        t0 + Duration::seconds(101),
+        Record::Event(EventKind::HostAlert {
+            alert: "driver_reset".into(),
+            detail: "eth0: kernel ifindex changed 2 -> 5".into(),
+        }),
+    ));
+    let r = a.finish(&[]);
+    assert_eq!(r.observer_incidents, 1, "{r:#?}");
+    assert_eq!(r.network_incidents, 2, "{r:#?}");
+    let wlo1 = r.ifaces.iter().find(|i| i.iface == "wlo1").unwrap();
+    assert_eq!(wlo1.episodes, 2, "only the 2 real network episodes count");
+    assert!(r.episodes.iter().any(|e| e.iface == "eth0" && e.origin == IncidentOrigin::Network));
+}
+
+#[test]
+fn wifi_retry_rate_ignores_gaps_and_none_counters_and_backfills_band() {
+    let t0 = DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+    let mut a = Analyzer::new(Opts::default());
+    for i in 0..30 {
+        let t = t0 + Duration::seconds(i);
+        let mut rec = samp("wlo1", IfaceRole::Wifi, if (10..15).contains(&i) { PathState::LinkDown } else { PathState::Ok }, 4.0);
+        if let Record::Sample(s) = &mut rec {
+            // During LinkDown, Sample.freq_mhz is None; should inherit previous 5180 MHz!
+            s.freq_mhz = if (10..15).contains(&i) { None } else { Some(5180) };
+        }
+        a.push(&env(t, rec));
+    }
+    // Backwards clock step episode test: last_bad < start should clamp cleanly.
+    a.push(&env(t0 + Duration::seconds(200), samp("wlo1", IfaceRole::Wifi, PathState::LanDown, 4.0)));
+    a.push(&env(t0 + Duration::seconds(197), samp("wlo1", IfaceRole::Wifi, PathState::LanDown, 4.0)));
+
+    // Wifi counters separated by 300 s (> 120 s) and None tx_retries: must not inflate rate or report Some(0.0).
+    for (sec, r) in [(0, None), (300, None), (310, Some(50))] {
+        a.push(&env(
+            t0 + Duration::seconds(sec),
+            Record::Wifi(WifiStation {
+                iface: "wlo1".into(),
+                connected: true,
+                freq_mhz: Some(5180),
+                tx_retries: r,
+                ..Default::default()
+            }),
+        ));
+    }
+    let rep = a.finish(&[]);
+    assert_eq!(rep.ifaces[0].retry_rate_per_min, None);
+    let down_ep = rep.episodes.iter().find(|e| e.state == PathState::LinkDown).unwrap();
+    assert_eq!(down_ep.band.as_deref(), Some("5 GHz"));
+    assert!(rep.episodes.iter().all(|e| e.duration_s >= 1.0), "{:#?}", rep.episodes);
+}
+
+#[test]
+fn congestion_airtime_and_router_telemetry_findings() {
+    let mut a = Analyzer::new(Opts::default());
+    // Construct timestamps in local daytime (12:00) vs local evening (20:00) so peak vs off-peak check is timezone-safe.
+    let today = Local::now().date_naive();
+    let day_t0 = Local
+        .from_local_datetime(&today.and_hms_opt(12, 0, 0).unwrap())
+        .earliest()
+        .unwrap()
+        .with_timezone(&Utc);
+    let peak_t0 = Local
+        .from_local_datetime(&today.and_hms_opt(20, 0, 0).unwrap())
+        .earliest()
+        .unwrap()
+        .with_timezone(&Utc);
+
+    for i in 0..20 {
+        let t = day_t0 + Duration::seconds(i);
+        a.push(&env(t, samp("eth0", IfaceRole::Ethernet, PathState::Ok, 1.0)));
+    }
+    for i in 0..20 {
+        let t = peak_t0 + Duration::seconds(i);
+        let mut rec = samp("eth0", IfaceRole::Ethernet, PathState::Ok, 1.5);
+        if let Record::Sample(s) = &mut rec {
+            s.net.rtt_ms = Some(95.0);
+        }
+        a.push(&env(t, rec));
+    }
+
+    // Wi-Fi airtime saturation: 3 separated stalls with idle local link and busy channel.
+    for s_idx in [0i64, 10, 20] {
+        let t = day_t0 + Duration::seconds(s_idx);
+        let mut rec = samp("wlo1", IfaceRole::Wifi, PathState::Ok, 240.0);
+        if let Record::Sample(s) = &mut rec {
+            s.rx_delta = 500;
+            s.tx_delta = 500;
+        }
+        a.push(&env(t, rec));
+        a.push(&env(
+            t,
+            Record::ChannelLoad(ChannelLoad {
+                iface: "wlo1".into(),
+                freq_mhz: 2437,
+                busy_pct: 68.0,
+                rx_pct: 48.0,
+                tx_pct: 2.0,
+                noise_dbm: None,
+                interval_ms: 10_000,
+            }),
+        ));
+    }
+
+    // Router telemetry samples with 1 uptime reset and 1 non-connected sample.
+    for (i, up, st) in [(0, 5000, "Connected"), (15, 10, "Disconnected"), (30, 25, "Connected")] {
+        a.push(&env(
+            day_t0 + Duration::seconds(i),
+            Record::Router(RouterSample {
+                source: Some("upnp_igd".into()),
+                model: Some("Example GW".into()),
+                phy_status: Some("Up".into()),
+                wan_status: Some(st.into()),
+                uptime_s: Some(up),
+                wan_rx_pps: Some(420.0),
+                wan_tx_pps: Some(80.0),
+                bytes_saturated: true,
+                ..Default::default()
+            }),
+        ));
+    }
+
+    let rep = a.finish(&[]);
+    let eth = rep.ifaces.iter().find(|i| i.iface == "eth0").unwrap();
+    assert!(eth.peak_net_rtt_p95.unwrap() > 80.0);
+    assert!(eth.offpeak_net_rtt_p95.unwrap() < 20.0);
+    let wlo1 = rep.ifaces.iter().find(|i| i.iface == "wlo1").unwrap();
+    assert_eq!(wlo1.wifi_airtime_congestion_stalls, 3);
+    let rr = rep.router.as_ref().unwrap();
+    assert_eq!(rr.uptime_resets, 1);
+    assert_eq!(rr.wan_down_samples, 1);
+    assert!(rep.findings.iter().any(|f| f.contains("shared-line/ISP congestion")), "{:?}", rep.findings);
+    assert!(rep.findings.iter().any(|f| f.contains("Wi-Fi airtime saturation")), "{:?}", rep.findings);
+    assert!(rep.findings.iter().any(|f| f.contains("WAN uptime reset")), "{:?}", rep.findings);
+}
+
+#[test]
+fn short_failure_during_own_speed_test_is_an_observer_incident() {
+    let t0 = DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+    let mut a = Analyzer::new(Opts::default());
+    for i in 0..60 {
+        let t = t0 + Duration::seconds(i);
+        let bad = (20..28).contains(&i);
+        let mut r = samp("wlo1", IfaceRole::Wifi, if bad { PathState::DnsDown } else { PathState::Ok }, 3.0);
+        if let Record::Sample(s) = &mut r
+            && (18..27).contains(&i)
+        {
+            s.speedtest_active = true;
+        }
+        a.push(&env(t, r));
+        a.push(&env(t, samp("eth0", IfaceRole::Ethernet, PathState::Ok, 1.0)));
+    }
+    let r = a.finish(&[]);
+    assert_eq!(r.observer_incidents, 1, "{r:#?}");
+    assert_eq!(r.network_incidents, 0, "{r:#?}");
+}
+
+#[test]
+fn lan_samples_summarize_and_annotate_outage_context() {
+    use chrono::TimeZone;
+    let day_t0 = Local.with_ymd_and_hms(2026, 6, 15, 11, 0, 0).unwrap().with_timezone(&Utc);
+    let peak_t0 = Local.with_ymd_and_hms(2026, 6, 15, 20, 0, 0).unwrap().with_timezone(&Utc);
+    let mut a = Analyzer::new(Opts::default());
+
+    for i in 0..4 {
+        a.push(&env(
+            day_t0 + Duration::minutes(i * 10),
+            Record::Lan(LanSample {
+                iface: "eth0".into(),
+                prefix_len: Some(24),
+                probed: 253,
+                ping_alive: 2,
+                arp_alive: 4,
+                unique_seen: 5,
+            }),
+        ));
+    }
+    for i in 0..4 {
+        a.push(&env(
+            peak_t0 + Duration::minutes(i * 10),
+            Record::Lan(LanSample {
+                iface: "eth0".into(),
+                prefix_len: Some(24),
+                probed: 253,
+                ping_alive: 6,
+                arp_alive: if i == 1 { 18 } else { 12 },
+                unique_seen: 21,
+            }),
+        ));
+    }
+    for s_idx in 0..10 {
+        let t = peak_t0 + Duration::minutes(10) + Duration::seconds(s_idx);
+        let bad = (3..=6).contains(&s_idx);
+        a.push(&env(t, samp("wlo1", IfaceRole::Wifi, if bad { PathState::LanDown } else { PathState::Ok }, 3.0)));
+    }
+
+    let rep = a.finish(&[]);
+    let lr = rep.lan.as_ref().expect("lan report present");
+    assert_eq!(lr.samples, 8);
+    assert_eq!(lr.arp_alive_max, Some(18));
+    assert_eq!(lr.unique_seen_max, Some(21));
+    assert_eq!(lr.offpeak_arp_alive_med, Some(4.0));
+    assert_eq!(lr.peak_arp_alive_med, Some(12.0));
+    assert!(rep.findings.iter().any(|f| f.contains("Active LAN devices")), "{:?}", rep.findings);
+    assert!(rep.findings.iter().any(|f| f.contains("Evening client count increases")), "{:?}", rep.findings);
+    assert!(
+        rep.episodes.iter().any(|e| e.context.iter().any(|c| c.contains("LAN devices active: 18"))),
+        "{:?}",
+        rep.episodes
+    );
+    let md = to_markdown(&rep);
+    assert!(md.contains("## LAN devices"), "{md}");
+    assert!(md.contains("Evening (18–24) median 12 vs off-peak 4"), "{md}");
+}
+
+#[test]
+fn roam_channel_change_overrun_and_suspend_attribution() {
+    let t0 = DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+    let mut a = Analyzer::new(Opts::default());
+
+    for i in 0..90 {
+        let t = t0 + Duration::seconds(i);
+        // Outage 1 (15..25): roam + channel change nearby -> Wi-Fi context.
+        let mut s_wifi = samp("wlo1", IfaceRole::Wifi, if (15..25).contains(&i) { PathState::LanDown } else { PathState::Ok }, 4.0);
+        // Outage 2 (50..60): overrun on observer ticks -> Observer origin.
+        if (50..60).contains(&i) {
+            s_wifi = samp("wlo1", IfaceRole::Wifi, PathState::LanDown, 4.0);
+            if let Record::Sample(ref mut inner) = s_wifi {
+                inner.overrun = true;
+            }
+        }
+        a.push(&env(t, s_wifi));
+        a.push(&env(t, samp("eth0", IfaceRole::Ethernet, PathState::Ok, 1.0)));
+    }
+    a.push(&env(
+        t0 + Duration::seconds(18),
+        Record::Event(EventKind::Roam { iface: "wlo1".into(), from_bssid: Some("02:00:00:00:00:01".into()), to_bssid: Some("02:00:00:00:00:02".into()) }),
+    ));
+    a.push(&env(
+        t0 + Duration::seconds(19),
+        Record::Event(EventKind::ChannelChange { iface: "wlo1".into(), from_mhz: Some(5180), to_mhz: Some(5260) }),
+    ));
+
+    // Outage 3 (110..120): SuspendGap covers the episode -> Observer origin.
+    for i in 100..130 {
+        let t = t0 + Duration::seconds(i);
+        a.push(&env(t, samp("wlo1", IfaceRole::Wifi, if (110..120).contains(&i) { PathState::WanDown } else { PathState::Ok }, 4.0)));
+    }
+    a.push(&env(t0 + Duration::seconds(120), Record::Event(EventKind::SuspendGap { secs: 12.0 })));
+
+    let rep = a.finish(&[]);
+    assert!(rep.findings.iter().any(|f| f.contains("roamed between access points")), "{:?}", rep.findings);
+    let ep_roam = rep.episodes.iter().find(|e| e.origin == IncidentOrigin::Network).expect("network episode present");
+    assert!(ep_roam.context.iter().any(|c| c.contains("roamed")), "{:?}", ep_roam.context);
+    assert!(ep_roam.context.iter().any(|c| c.contains("channel changed")), "{:?}", ep_roam.context);
+    assert_eq!(rep.network_incidents, 1, "{:#?}", rep.episodes);
+    assert_eq!(rep.observer_incidents, 2, "{:#?}", rep.episodes);
+}

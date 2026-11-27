@@ -1,0 +1,55 @@
+[package]
+name = "linkwatch"
+version = "0.5.0"
+edition = "2024"
+description = "Per-second network path monitor: find out whether drops come from Wi-Fi, the router, the line or the internet."
+license-file = "LICENSE.md"
+readme = "README.md"
+repository = "https://github.com/OlehDzhumyk/linkwatch"
+documentation = "https://github.com/OlehDzhumyk/linkwatch/blob/master/docs/FEATURES.md"
+keywords = ["network", "monitoring", "wifi", "diagnostics", "raspberry-pi"]
+categories = ["network-programming", "command-line-utilities"]
+publish = false
+
+[dependencies]
+anyhow = "1.0.105"
+axum = "0.7"
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "std", "serde"] }
+clap = { version = "4.6.10", features = ["derive", "env"] }
+fd-lock = "4.0.4"
+flate2 = "1.1.11"
+futures = "0.3.34"
+libc = "0.2.191"
+netlink-sys = "0.8.8"
+nix = { version = "0.32.0", features = ["socket", "net", "time", "fs", "uio", "user"] }
+sd-notify = "0.5.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+socket2 = { version = "0.6.5", features = ["all"] }
+thiserror = "2.0.21"
+tokio = { version = "1.54.1", features = ["full"] }
+tokio-stream = { version = "0.1.19", features = ["sync"] }
+toml = "1.2.3"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
+uuid = { version = "1.29.3", features = ["v4"] }
+md-5 = "0.10"
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12"] }
+# Pure-Rust crypto provider (no C toolchain for musl/aarch64 builds). It is a pre-release and not
+# audited, so it is pinned exactly and used only for the on-demand CVE lookup over public HTTPS
+# (no secrets are sent; certificates are verified against webpki-roots). Review on every bump.
+rustls-rustcrypto = "=0.1.0-pre.0"
+snmp2 = { version = "0.5.3", default-features = false, features = ["tokio", "crypto-rust"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["tls12"] }
+webpki-roots = "1.0"
+
+[dev-dependencies]
+tempfile = "3.27.0"
+# TypeScript bindings of the web API (src/web/ui/src/api/), written by `cargo test`.
+ts-rs = { version = "12.0.1", features = ["chrono-impl", "serde-json-impl", "no-serde-warnings"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "unwind"

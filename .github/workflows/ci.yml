@@ -1,0 +1,103 @@
+# CI: tests, lints, a static Linux build, dependency audit and a secret scan.
+# Third-party actions are pinned to full commit SHAs (tag in the comment);
+# Dependabot below keeps the pins up to date.
+name: ci
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy,rustfmt
+          rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Tests
+        run: cargo test --locked --release
+      # cargo test rewrites the TypeScript bindings of the API (ts-rs); they must be committed.
+      - name: API bindings are current
+        run: |
+          git diff --exit-code -- src/web/ui/src/api
+          test -z "$(git status --porcelain -- src/web/ui/src/api)" || { git status --porcelain -- src/web/ui/src/api; exit 1; }
+      - name: Static builds (musl amd64 & arm64) and Debian packages
+        run: |
+          RUST_LLD=$(find "$(rustc --print sysroot)" -name rust-lld -type f | head -n1)
+          test -x "$RUST_LLD"
+          export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER="$RUST_LLD"
+          export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER="$RUST_LLD"
+          cargo build --locked --release --target x86_64-unknown-linux-musl
+          cargo build --locked --release --target aarch64-unknown-linux-musl
+          packaging/build-deb.sh target/x86_64-unknown-linux-musl/release/linkwatch amd64
+          packaging/build-deb.sh target/aarch64-unknown-linux-musl/release/linkwatch arm64
+
+  # Web UI: strict type check and build with the pinned TypeScript (package-lock.json).
+  # The compiled modules (src/web/ui/dist) are committed so cargo builds need no Node;
+  # this job fails when they or the API bindings are not current. Node comes with the runner.
+  ui:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install (lockfile, no install scripts)
+        run: |
+          node --version
+          npm ci --ignore-scripts --no-audit --no-fund
+      - name: Type check
+        run: npm run check
+      - name: Build
+        run: npm run build
+      - name: CSP policy audit
+        run: |
+          ! grep -rnE "innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|style=|\.style\." src/web/ui/src src/web/ui/index.html
+      - name: Compiled UI and bindings are committed
+        run: |
+          git diff --exit-code -- src/web/ui/dist src/web/ui/src/api
+          test -z "$(git status --porcelain -- src/web/ui/dist src/web/ui/src/api)" || { git status --porcelain -- src/web/ui/dist src/web/ui/src/api; exit 1; }
+
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: cargo audit (RustSec advisories)
+        run: |
+          cargo install --locked cargo-audit
+          cargo audit --deny warnings
+
+  secrets:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
