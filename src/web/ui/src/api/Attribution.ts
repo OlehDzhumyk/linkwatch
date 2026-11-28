@@ -3,4 +3,4 @@
 /**
  * Graded result of one incident.
  */
-export type Attribution = "network" | "network_despite_host" | "mixed" | "observer_likely" | "observer_confirmed";
+export type Attribution = "network" | "network_despite_host" | "mixed" | "observer_likely" | "observer_confirmed" | "inconclusive";

@@ -1,5 +1,6 @@
 //! One test per scenario A1-A34 of docs/INCIDENT-ATTRIBUTION.md (section 7), plus end-to-end
-//! tests through the `Analyzer` for A10, A21, A22, A28 and A31.
+//! tests through the `Analyzer` for A10, A21, A22, A28 and A31. Masking (section 10, phase 1):
+//! M1, M2, M3, M5, M11.
 
 use super::attribution::*;
 use super::*;
@@ -542,4 +543,86 @@ fn a31_e2e_carrier_loss() {
     assert_eq!(f.attribution, Attribution::Network, "{f:#?}");
     assert_eq!(f.confidence, Confidence::High, "{f:#?}");
     assert_eq!(f.network_causes.first(), Some(&NetworkCause::CarrierLoss), "{f:#?}");
+}
+
+fn blinded_elements(r: &Finding) -> Vec<Element> {
+    r.blinded.iter().map(|b| b.element).collect()
+}
+
+#[test]
+fn m01_busy_channel_blinds_router_and_line() {
+    let mut f = wifi(20);
+    f.busy_pct = Some(90.0);
+    let r = attribute(&f);
+    assert_eq!(r.attribution, Attribution::Inconclusive, "{r:#?}");
+    assert_eq!(r.confidence, Confidence::Low, "{r:#?}");
+    assert_eq!(blinded_elements(&r), vec![Element::Router, Element::Line], "{r:#?}");
+    assert!(r.blinded.iter().all(|b| b.by == BlindCause::BusyChannel), "{r:#?}");
+    assert!(r.flip.is_some(), "{r:#?}");
+    assert!(near(r.network_s, 20.0), "{r:#?}");
+}
+
+#[test]
+fn m02_healthy_ethernet_unblinds() {
+    let mut f = eth_ok(wifi(20));
+    f.busy_pct = Some(90.0);
+    let r = attribute(&f);
+    assert_eq!(r.attribution, Attribution::Network, "{r:#?}");
+    assert!(r.blinded.is_empty(), "{r:#?}");
+    assert_eq!(r.network_causes.first(), Some(&NetworkCause::BusyChannel), "{r:#?}");
+}
+
+#[test]
+fn m03_weak_signal_blinds_router_and_line() {
+    let mut f = wifi(20);
+    f.signal_dbm = Some(-86.0);
+    let r = attribute(&f);
+    assert_eq!(r.attribution, Attribution::Inconclusive, "{r:#?}");
+    assert_eq!(blinded_elements(&r), vec![Element::Router, Element::Line], "{r:#?}");
+    assert!(r.blinded.iter().all(|b| b.by == BlindCause::WeakSignal), "{r:#?}");
+}
+
+#[test]
+fn m05_unsynced_clock_ignores_router_log() {
+    // The router log line is not counter-evidence: the strong overrun is not contradicted.
+    let mut f = eth_ok(wifi(30));
+    f.overrun_ticks = 25;
+    f.router_hit = true;
+    f.clock_unsynced = true;
+    let r = attribute(&f);
+    assert_eq!(r.attribution, Attribution::ObserverConfirmed, "{r:#?}");
+    // A network result: the log line does not raise confidence and is noted as blind.
+    let mut f = wifi(20);
+    f.router_hit = true;
+    f.clock_unsynced = true;
+    let r = attribute(&f);
+    assert_eq!(r.attribution, Attribution::Network, "{r:#?}");
+    assert_eq!(r.confidence, Confidence::Low, "{r:#?}");
+    assert!(!r.network_causes.contains(&NetworkCause::RouterLog), "{r:#?}");
+    assert_eq!(r.blinded.len(), 1, "{r:#?}");
+    assert_eq!((r.blinded[0].element, r.blinded[0].by), (Element::Line, BlindCause::ClockUnsynced), "{r:#?}");
+    // With a synchronized clock the same log line counts.
+    f.clock_unsynced = false;
+    let r = attribute(&f);
+    assert_eq!(r.confidence, Confidence::High, "{r:#?}");
+    assert!(r.blinded.is_empty(), "{r:#?}");
+}
+
+#[test]
+fn m11_small_conditions_never_blind() {
+    // 2 of 30 ticks late, a moderately busy channel and a usable signal: nothing is blinded.
+    let mut f = wifi(30);
+    f.overrun_ticks = 2;
+    f.busy_pct = Some(40.0);
+    f.signal_dbm = Some(-60.0);
+    let r = attribute(&f);
+    assert_eq!(r.attribution, Attribution::NetworkDespiteHost, "{r:#?}");
+    assert!(r.blinded.is_empty(), "{r:#?}");
+    // Just below each threshold.
+    let mut f = wifi(30);
+    f.busy_pct = Some(69.9);
+    f.signal_dbm = Some(-74.0);
+    let r = attribute(&f);
+    assert_eq!(r.attribution, Attribution::Network, "{r:#?}");
+    assert!(r.blinded.is_empty(), "{r:#?}");
 }
