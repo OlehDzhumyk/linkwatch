@@ -2,9 +2,10 @@
 
 All notable changes to `linkwatch` are documented in this file.
 
-## [Unreleased]
+## [0.6.0] - 2026-11-28
 
 ### Added
+- Step-by-step install guide: [docs/INSTALL.md](docs/INSTALL.md).
 - `linkwatch check` reads host settings that can imitate network faults (no root needed):
   per-interface `rp_filter`, cable speed/duplex and NIC CRC errors, USB/PCIe power control,
   active VPN/tunnel interfaces, conntrack fill and container bridges, two network managers,
