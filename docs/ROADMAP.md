@@ -8,6 +8,8 @@ Design specifications for upcoming capabilities and how each should work safely 
 
 ## Before 1.0
 
+Target structure and refactor order: [ARCHITECTURE.md](ARCHITECTURE.md).
+
 - Validate verdicts on real recorded nights. Add golden tests built from them.
 - IPv6 probing. There is none today.
 - Published release binaries. The release workflow exists. See the GitHub Releases page for what it published.
