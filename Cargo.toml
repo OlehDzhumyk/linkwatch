@@ -33,7 +33,7 @@ toml = "1.2.3"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
 uuid = { version = "1.29.3", features = ["v4"] }
-md-5 = "0.10"
+md-5 = "0.11"
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12"] }
 # Pure-Rust crypto provider (no C toolchain for musl/aarch64 builds). It is a pre-release and not
 # audited, so it is pinned exactly. It is used for two things: the on-demand CVE lookup over
