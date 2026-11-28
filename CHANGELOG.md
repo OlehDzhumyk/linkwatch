@@ -2,7 +2,7 @@
 
 All notable changes to `linkwatch` are documented in this file.
 
-## [Unreleased]
+## [0.13.0] - 2026-11-28
 
 Behaviour changes for accuracy (docs/ARCHITECTURE.md, step R8). Golden snapshots change; see
 each item.
@@ -33,6 +33,10 @@ each item.
   `LanDown (started as WanDown)` and the web incident row shows a "started as …" badge, only
   when the two differ. The web report API has the same field. `expect.json` of the golden
   sessions holds it too.
+
+### Fixed
+- Headline: drops only during our own speed test give `all_ok_load` ("N drops during our own
+  speed test excluded"), not "no drops recorded".
 
 ## [0.12.0] - 2026-11-28
 
