@@ -7,13 +7,28 @@ pub(super) fn link_key(l: &LinkState) -> (bool, bool, bool, Option<Ipv4Addr>, Op
     (l.present, l.up, l.carrier, l.ipv4, l.prefix_len, l.gateway)
 }
 
-/// Record carrier of an interface. Returns true when the interface had link at some point in
-/// this run, so that it may take part in the verdict.
-pub(super) fn note_link(had_link: &mut HashSet<String>, iface: &str, carrier: bool) -> bool {
-    if carrier && !had_link.contains(iface) {
-        had_link.insert(iface.to_string());
+/// A router failure drops all links within seconds. A wired link down for longer than this
+/// is an old unplug, not evidence against the router.
+pub(super) const WIRED_DOWN_WINDOW_S: i64 = 15;
+
+/// Record carrier of an interface (`seen` maps it to the last time it had link). Returns true
+/// when the interface may take part in the verdict: it had link in this run and, if wired, lost
+/// it no longer than `WIRED_DOWN_WINDOW_S` ago.
+pub(super) fn note_link(
+    seen: &mut HashMap<String, chrono::DateTime<chrono::Utc>>,
+    iface: &str,
+    role: IfaceRole,
+    carrier: bool,
+    at: chrono::DateTime<chrono::Utc>,
+) -> bool {
+    if carrier {
+        seen.insert(iface.to_string(), at);
+        return true;
     }
-    had_link.contains(iface)
+    match seen.get(iface) {
+        None => false,
+        Some(last) => role == IfaceRole::Wifi || (at - *last).num_seconds() <= WIRED_DOWN_WINDOW_S,
+    }
 }
 
 pub(super) async fn tick_loop(ctx: Ctx, summary: Arc<Mutex<Summary>>) -> anyhow::Result<()> {
@@ -35,7 +50,7 @@ pub(super) async fn tick_loop(ctx: Ctx, summary: Arc<Mutex<Summary>>) -> anyhow:
     let mut dns_fails: HashMap<String, u32> = HashMap::new();
     // Interfaces that had carrier at least once in this run. A path that never had link
     // (unused Ethernet port) takes no part in the verdict.
-    let mut had_link: HashSet<String> = HashSet::new();
+    let mut had_link: HashMap<String, chrono::DateTime<chrono::Utc>> = HashMap::new();
     let mut verdict = Verdict::Unknown;
     let mut verdict_since = now;
     let mut alert_sent_for: Option<Verdict> = None;
@@ -140,7 +155,7 @@ pub(super) async fn tick_loop(ctx: Ctx, summary: Arc<Mutex<Summary>>) -> anyhow:
             }
             let deb = c.state();
             *sum.state_s.entry(s.iface.clone()).or_default().entry(state_name(deb)).or_default() += period.as_secs_f64();
-            if note_link(&mut had_link, &s.iface, s.link.carrier) {
+            if note_link(&mut had_link, &s.iface, s.role, s.link.carrier, at) {
                 states.push((s.role, deb));
             }
             let acc = accs.entry(s.iface.clone()).or_default();
@@ -333,30 +348,67 @@ pub(super) fn multi(rs: &[ProbeResult]) -> MultiResult {
 mod verdict_input_tests {
     use super::*;
 
-    fn tick(had: &mut HashSet<String>, wifi: PathState, eth: PathState, wifi_c: bool, eth_c: bool) -> Verdict {
+    use chrono::{Duration as CD, TimeZone, Utc};
+
+    type Seen = HashMap<String, chrono::DateTime<chrono::Utc>>;
+
+    fn tick(had: &mut Seen, at: chrono::DateTime<Utc>, wifi: PathState, eth: PathState, wifi_c: bool, eth_c: bool) -> Verdict {
         let mut states = Vec::new();
-        if note_link(had, "wlan0", wifi_c) {
+        if note_link(had, "wlan0", IfaceRole::Wifi, wifi_c, at) {
             states.push((IfaceRole::Wifi, wifi));
         }
-        if note_link(had, "eth0", eth_c) {
+        if note_link(had, "eth0", IfaceRole::Ethernet, eth_c, at) {
             states.push((IfaceRole::Ethernet, eth));
         }
         classify::verdict(&states, true)
     }
 
+    fn t0() -> chrono::DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap()
+    }
+
     #[test]
     fn unused_ethernet_port_does_not_make_router_problem() {
-        let mut had = HashSet::new();
-        assert_eq!(tick(&mut had, PathState::Ok, PathState::LinkDown, true, false), Verdict::AllOk);
-        let v = tick(&mut had, PathState::LinkDown, PathState::LinkDown, false, false);
+        let mut had = Seen::new();
+        assert_eq!(tick(&mut had, t0(), PathState::Ok, PathState::LinkDown, true, false), Verdict::AllOk);
+        let v = tick(&mut had, t0() + CD::seconds(1), PathState::LinkDown, PathState::LinkDown, false, false);
         assert_eq!(v, Verdict::SinglePath);
     }
 
     #[test]
     fn both_paths_had_link_and_lost_it_is_router_problem() {
-        let mut had = HashSet::new();
-        assert_eq!(tick(&mut had, PathState::Ok, PathState::Ok, true, true), Verdict::AllOk);
-        let v = tick(&mut had, PathState::LinkDown, PathState::LinkDown, false, false);
+        let mut had = Seen::new();
+        assert_eq!(tick(&mut had, t0(), PathState::Ok, PathState::Ok, true, true), Verdict::AllOk);
+        let v = tick(&mut had, t0() + CD::seconds(1), PathState::LinkDown, PathState::LinkDown, false, false);
+        assert_eq!(v, Verdict::RouterProblem);
+    }
+
+    #[test]
+    fn cable_unplugged_long_before_wifi_drop_is_not_router_problem() {
+        let mut had = Seen::new();
+        tick(&mut had, t0(), PathState::Ok, PathState::Ok, true, true);
+        tick(&mut had, t0() + CD::seconds(1), PathState::Ok, PathState::LinkDown, true, false);
+        let v = tick(&mut had, t0() + CD::seconds(601), PathState::LinkDown, PathState::LinkDown, false, false);
+        assert_ne!(v, Verdict::RouterProblem);
+        assert_eq!(v, Verdict::SinglePath);
+    }
+
+    #[test]
+    fn cable_and_wifi_lost_three_seconds_apart_is_router_problem() {
+        let mut had = Seen::new();
+        tick(&mut had, t0(), PathState::Ok, PathState::Ok, true, true);
+        tick(&mut had, t0() + CD::seconds(1), PathState::Ok, PathState::LinkDown, true, false);
+        let v = tick(&mut had, t0() + CD::seconds(4), PathState::LinkDown, PathState::LinkDown, false, false);
+        assert_eq!(v, Verdict::RouterProblem);
+    }
+
+    #[test]
+    fn reconnected_cable_counts_again() {
+        let mut had = Seen::new();
+        tick(&mut had, t0(), PathState::Ok, PathState::Ok, true, true);
+        tick(&mut had, t0() + CD::seconds(600), PathState::Ok, PathState::LinkDown, true, false);
+        tick(&mut had, t0() + CD::seconds(700), PathState::Ok, PathState::Ok, true, true);
+        let v = tick(&mut had, t0() + CD::seconds(702), PathState::LinkDown, PathState::LinkDown, false, false);
         assert_eq!(v, Verdict::RouterProblem);
     }
 }
