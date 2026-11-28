@@ -24,10 +24,10 @@ For every configured or auto-detected physical interface (bound with `SO_BINDTOD
 | **Link** | `sysfs` / `getifaddrs` (`src/link.rs`) | Unplugged cable, interface down, disassociated Wi-Fi |
 | **Wi-Fi** | `nl80211` generic netlink (`src/wifi/`) | Weak RSSI, busy channel airtime, high TX retries, disconnects, roaming |
 | **Router (GW)** | Unprivileged `SOCK_DGRAM` ICMP + optional UPnP IGD | Local Wi-Fi hop or gateway hang/reboot |
-| **ISP hop** | TTL-limited probe (`IP_TTL 2..=4` via `IP_RECVERR`) to first non-private IPv4 hop | Access modem / DOCSIS / DSL / FTTH line fault |
+| **ISP hop** | TTL-limited probe (`IP_TTL 2..=4` via `IP_RECVERR`) to first public IPv4 hop that answers echo (silent BNG/BRAS hops and private/CGNAT second-NAT hops are not used) | Access modem / DOCSIS / DSL / FTTH line fault |
 | **Internet** | Multiple public IPs (ICMP + TCP connect to `:443`) | Upstream transit outage (only `WanDown` when **all** internet targets fail) |
 | **DNS** | Hand-built UDP DNS A-record query to system or configured resolvers | DNS resolution fault independent of IP connectivity |
-| **Speed** | Periodic plain HTTP/1.1 download (`src/speed.rs`, one interface at a time, skipping TCP warmup window) | Evening / peak bandwidth throttling or bufferbloat under load |
+| **Speed** | Periodic plain HTTP/1.1 download (`src/speed.rs`, one interface at a time, skipping TCP warmup window). Default: every 6 h, at most 8 s and 50 MiB per test (about 200 MiB per day per interface) | Evening / peak bandwidth throttling or bufferbloat under load |
 
 ### Debouncing & Cross-Path Verdicts
 - Raw per-tick probes are recorded unconditionally (`samples-YYYYMMDD.jsonl`).

@@ -21,13 +21,71 @@ use std::time::Duration;
 /// Target of the TTL walk used for ISP-hop discovery.
 const ISP_WALK_TARGET: Ipv4Addr = Ipv4Addr::new(1, 1, 1, 1);
 
-/// First hop after the gateway that is not in the LAN subnet of `iface`.
+/// Echo requests sent to a discovered hop before it is trusted.
+const ECHO_CHECK_TRIES: u32 = 3;
+/// Time for one echo request of the check (about 3 s in total).
+const ECHO_CHECK_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// What a TTL-walk responder is, for ISP-hop discovery.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HopClass {
+    /// Gateway, LAN member, walk target or bogus address: ignore.
+    Skip,
+    /// Private or CGNAT address that is not the gateway: a second NAT box
+    /// of the user (double NAT), not the ISP. Look further.
+    SecondNat,
+    /// Public address: a candidate for the ISP first hop.
+    Public,
+}
+
+/// True for RFC 1918 (10/8, 172.16/12, 192.168/16) and CGNAT 100.64.0.0/10.
+fn is_private_or_cgnat(ip: Ipv4Addr) -> bool {
+    let o = ip.octets();
+    ip.is_private() || (o[0] == 100 && (o[1] & 0xC0) == 64)
+}
+
+fn classify_hop(hop: Ipv4Addr, gateway: Ipv4Addr, lan: Option<(Ipv4Addr, u8)>) -> HopClass {
+    if !is_isp_candidate(hop, gateway, lan) {
+        HopClass::Skip
+    } else if is_private_or_cgnat(hop) {
+        HopClass::SecondNat
+    } else {
+        HopClass::Public
+    }
+}
+
+/// Acceptance rule: one answered echo out of the tries is enough.
+fn echo_accepted(answered: u32) -> bool {
+    answered >= 1
+}
+
+/// Sends up to [`ECHO_CHECK_TRIES`] echo requests; stops at the first reply.
+async fn answers_echo(iface: &str, hop: Ipv4Addr) -> bool {
+    let mut answered = 0;
+    for _ in 0..ECHO_CHECK_TRIES {
+        if icmp::ping(iface, hop, ECHO_CHECK_TIMEOUT).await.ok {
+            answered += 1;
+            break;
+        }
+    }
+    echo_accepted(answered)
+}
+
+/// First ISP hop after the gateway that is outside the LAN subnet of `iface`
+/// and that answers ICMP echo.
 ///
-/// Walks TTL 2..=4 towards 1.1.1.1 and returns the first responder that is
-/// neither the gateway, nor inside the LAN subnet, nor the walk target itself.
-/// Private (RFC 1918) addresses outside the LAN are accepted, because some
-/// cable ISPs use RFC 1918 addresses for their first hop.
-/// Returns `None` if no hop answers within `timeout` per TTL.
+/// Walks TTL 2..=4 towards 1.1.1.1 ("time exceeded" replies). The hop is
+/// pinged every tick later, and the classifier reads "ISP hop silent" as a
+/// line fault. So a hop is trusted only if it answers echo. Many ISP access
+/// routers (BNG/BRAS) never do. Without this check every internet outage
+/// would be blamed on the line.
+///
+/// A private or CGNAT hop that is not the gateway is the user's own second
+/// NAT box (double NAT). It says nothing about the line, so the walk
+/// continues (up to TTL 4) for a public hop. If the first public hop is
+/// silent, there is no ISP hop (`None`): the walk does not go on to a later
+/// router, which would not be the first hop.
+/// Returns `None` if nothing usable is found within `timeout` per TTL.
 pub async fn discover_isp_hop(
     iface: &str,
     gateway: Ipv4Addr,
@@ -39,8 +97,18 @@ pub async fn discover_isp_hop(
         let Some(hop) = icmp::probe_ttl(iface, ISP_WALK_TARGET, ttl, timeout).await else {
             continue;
         };
-        if is_isp_candidate(hop, gateway, lan) {
-            return Some(hop);
+        match classify_hop(hop, gateway, lan) {
+            HopClass::Skip => {}
+            HopClass::SecondNat => {
+                tracing::info!(%iface, %hop, ttl, "ISP hop candidate is private (second NAT box); looking further");
+            }
+            HopClass::Public => {
+                if answers_echo(iface, hop).await {
+                    return Some(hop);
+                }
+                tracing::info!(%iface, %hop, ttl, "ISP hop candidate does not answer echo; not used, ISP checks stay off");
+                return None;
+            }
         }
     }
     None
@@ -92,10 +160,40 @@ mod tests {
         let lan = Some((Ipv4Addr::new(192, 168, 0, 42), 24));
         assert!(!is_isp_candidate(gw, gw, lan));
         assert!(!is_isp_candidate(Ipv4Addr::new(192, 168, 0, 2), gw, lan));
-        // An RFC 1918 first hop outside the LAN (used by some cable ISPs): accept.
         assert!(is_isp_candidate(Ipv4Addr::new(10, 0, 0, 1), gw, lan));
         assert!(is_isp_candidate(Ipv4Addr::new(203, 0, 113, 1), gw, None));
         assert!(!is_isp_candidate(ISP_WALK_TARGET, gw, lan));
+    }
+
+    #[test]
+    fn private_and_cgnat_ranges() {
+        for a in [[10, 1, 2, 3], [172, 16, 0, 1], [172, 31, 255, 1], [192, 168, 1, 1], [100, 64, 0, 1], [100, 127, 255, 254]] {
+            assert!(is_private_or_cgnat(Ipv4Addr::from(a)), "{a:?}");
+        }
+        for a in [[172, 32, 0, 1], [172, 15, 0, 1], [100, 63, 255, 255], [100, 128, 0, 1], [203, 0, 113, 1], [8, 8, 8, 8]] {
+            assert!(!is_private_or_cgnat(Ipv4Addr::from(a)), "{a:?}");
+        }
+    }
+
+    #[test]
+    fn hop_classes() {
+        let gw = Ipv4Addr::new(192, 168, 0, 1);
+        let lan = Some((Ipv4Addr::new(192, 168, 0, 42), 24));
+        assert_eq!(classify_hop(gw, gw, lan), HopClass::Skip);
+        assert_eq!(classify_hop(Ipv4Addr::new(192, 168, 0, 7), gw, lan), HopClass::Skip);
+        assert_eq!(classify_hop(ISP_WALK_TARGET, gw, lan), HopClass::Skip);
+        // Double NAT: private hop outside the LAN that is not the gateway.
+        assert_eq!(classify_hop(Ipv4Addr::new(192, 168, 1, 1), gw, lan), HopClass::SecondNat);
+        assert_eq!(classify_hop(Ipv4Addr::new(10, 0, 0, 1), gw, lan), HopClass::SecondNat);
+        assert_eq!(classify_hop(Ipv4Addr::new(100, 64, 0, 1), gw, lan), HopClass::SecondNat);
+        assert_eq!(classify_hop(Ipv4Addr::new(203, 0, 113, 1), gw, lan), HopClass::Public);
+    }
+
+    #[test]
+    fn echo_acceptance_rule() {
+        assert!(!echo_accepted(0));
+        assert!(echo_accepted(1));
+        assert!(echo_accepted(3));
     }
 
     #[test]

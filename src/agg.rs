@@ -172,7 +172,7 @@ mod tests {
 
     #[test]
     fn peak_window_wraps_midnight() {
-        let cfg = Speed::default(); // 18:00-00:00 peak 30, else 60
+        let cfg = Speed { interval_min: 60, peak_interval_min: 30, ..Speed::default() }; // 18:00-00:00 peak 30, else 60
         let at = |h, m| Local.with_ymd_and_hms(2026, 11, 26, h, m, 0).single().unwrap();
         assert_eq!(speed_interval_min(&cfg, at(12, 0)), 60);
         assert_eq!(speed_interval_min(&cfg, at(18, 0)), 30);
