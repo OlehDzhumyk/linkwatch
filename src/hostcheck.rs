@@ -5,13 +5,9 @@
 //! Only reads `/sys` and `/proc` (no root, no subprocesses). Every path is relative to `root`
 //! so tests can run against a fake tree.
 
-use crate::check::{Item, Level};
+use crate::check::{Item, Level, item};
 use crate::model::IfaceRole;
 use std::path::{Path, PathBuf};
-
-fn item(level: Level, name: impl Into<String>, detail: impl Into<String>, fix: Option<&str>) -> Item {
-    Item { level, name: name.into(), detail: detail.into(), fix: fix.map(String::from) }
-}
 
 fn read_trim(p: &Path) -> Option<String> {
     std::fs::read_to_string(p).ok().map(|s| s.trim().to_string())
@@ -71,6 +67,7 @@ fn rp_filter(root: &Path, iface: &str) -> Item {
         format!("effective {eff} (all={all}, {iface}={dev})"),
         (eff == 1).then_some("strict mode drops replies on the second interface; set net.ipv4.conf.all.rp_filter=2 and the per-interface value to 0 or 2"),
     )
+    .code("path_isolation")
 }
 
 /// H9: a loose cable or bad jack renegotiates down or produces CRC errors; the wired reference
@@ -165,7 +162,7 @@ fn mac_and_mtu(base: &Path, iface: &str, role: IfaceRole) -> Vec<Item> {
             } else {
                 "a changing MAC resets DHCP/ARP on the router; set ethernet.cloned-mac-address=permanent"
             }),
-        ));
+        ).code("random_mac"));
     }
     if let Some(mtu) = read_u64(&base.join("mtu"))
         && mtu < 1500
@@ -268,6 +265,7 @@ fn tunnels(net: &Path, monitored: &[(String, IfaceRole)]) -> Option<Item> {
             format!("active: {}", found.join(", ")),
             Some("a VPN can carry the internet probes instead of the monitored interface; stop it during the run or check `ip route get 1.1.1.1`"),
         )
+        .code("vpn_active")
     })
 }
 
@@ -302,7 +300,7 @@ fn conntrack(root: &Path) -> Option<Item> {
         "conntrack",
         detail,
         (lvl != Level::Ok).then_some("the host firewall table is almost full and drops new connections; raise net.netfilter.nf_conntrack_max or stop the busy service"),
-    ))
+    ).code("conntrack_full"))
 }
 
 /// Process names of a running `/proc` tree.
@@ -336,7 +334,7 @@ fn net_managers(root: &Path) -> Option<Item> {
         "network managers",
         if found.is_empty() { "none detected".into() } else { found.join(", ") },
         conflict.then_some("two managers can re-apply routes or renew DHCP at random; make sure each interface is managed by only one of them"),
-    ))
+    ).code("two_net_managers"))
 }
 
 /// H17 / H23: a soft-blocked radio, or Bluetooth active on a Wi-Fi+BT combo card at 2.4 GHz.
@@ -358,7 +356,7 @@ fn rfkill(root: &Path, ifaces: &[(String, IfaceRole)], ctx: &Ctx) -> Vec<Item> {
     }
     let has_wifi = ifaces.iter().any(|(_, r)| *r == IfaceRole::Wifi);
     if has_wifi && !wlan_blocked.is_empty() {
-        out.push(item(Level::Fail, "rfkill wlan", format!("blocked: {}", wlan_blocked.join(", ")), Some("rfkill unblock wifi (a hard block is a physical switch or BIOS setting)")));
+        out.push(item(Level::Fail, "rfkill wlan", format!("blocked: {}", wlan_blocked.join(", ")), Some("rfkill unblock wifi (a hard block is a physical switch or BIOS setting)")).code("wifi_blocked"));
     }
     if has_wifi && bt_on {
         out.push(item(
@@ -366,7 +364,7 @@ fn rfkill(root: &Path, ifaces: &[(String, IfaceRole)], ctx: &Ctx) -> Vec<Item> {
             "bluetooth",
             if ctx.wifi_on_24ghz { "radio on while Wi-Fi uses 2.4 GHz" } else { "radio on (Wi-Fi is not on 2.4 GHz)" },
             ctx.wifi_on_24ghz.then_some("combo Wi-Fi+BT cards share the 2.4 GHz antenna and add 50-150 ms RTT spikes; run `rfkill block bluetooth` during the test"),
-        ));
+        ).code("bluetooth_24ghz"));
     }
     out
 }

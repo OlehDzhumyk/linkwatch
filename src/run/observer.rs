@@ -9,7 +9,7 @@ pub(super) async fn host_loop(ctx: Ctx) -> anyhow::Result<()> {
 }
 
 pub(super) fn host_blocking(ctx: Ctx) -> anyhow::Result<()> {
-    let mut mon = host::HostMonitor::new();
+    let mut mon = host::HostMonitor::with_accept(ctx.cfg.advisor.accept.clone());
     let every = Duration::from_secs(ctx.cfg.intervals.host_s.max(1));
     loop {
         if ctx.stopping() {
@@ -24,10 +24,34 @@ pub(super) fn host_blocking(ctx: Ctx) -> anyhow::Result<()> {
         let (sample, alerts) = mon.sample(&ctx.cfg.data_dir, &ctx.ifaces, wifi_ps);
         ctx.live.update(|s| s.host = Some(sample.clone()));
         ctx.store.send(Record::Host(sample));
+        if let Some(tx) = &ctx.notifier {
+            for msg in alerts.iter().filter_map(advisor_alert) {
+                tx.send(msg);
+            }
+        }
         ctx.emit_all(alerts);
         if sleep_blocking_until_stop(&ctx, every) {
             return Ok(());
         }
+    }
+}
+
+/// Notifier message for an advisor event (start or clear). One key per condition and edge, so the
+/// notifier cooldown never lets a repeat through.
+fn advisor_alert(ev: &EventKind) -> Option<notify::AlertMsg> {
+    match ev {
+        EventKind::HostAlert { alert: alert @ (HostAlertKind::WifiPowerSave | HostAlertKind::ClockUnsynced), detail, iface } => Some(notify::AlertMsg {
+            key: format!("advisor:{}:{}", alert.as_str(), iface.as_deref().unwrap_or("-")),
+            title: format!("linkwatch: {}", alert.as_str()),
+            body: detail.clone(),
+            urgent: false,
+        }),
+        EventKind::Note { text } => {
+            let rest = text.strip_prefix(host::ADVISOR_CLEARED_PREFIX)?;
+            let code = rest.split_whitespace().next()?;
+            Some(notify::AlertMsg { key: format!("advisor:{code}:cleared:{}", rest.len()), title: format!("linkwatch: {code} cleared"), body: rest.to_string(), urgent: false })
+        }
+        _ => None,
     }
 }
 

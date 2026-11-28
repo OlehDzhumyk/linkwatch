@@ -3,4 +3,4 @@
 /**
  * Kind of an observer (host) alert. The JSON strings are the same as in old session files.
  */
-export type HostAlertKind = "high_cpu" | "low_memory" | "driver_reset" | "wifi_power_save" | "undervoltage" | "thermal_throttle" | "other";
+export type HostAlertKind = "high_cpu" | "low_memory" | "driver_reset" | "wifi_power_save" | "undervoltage" | "thermal_throttle" | "clock_unsynced" | "other";

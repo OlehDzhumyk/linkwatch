@@ -23,6 +23,7 @@ pub struct Config {
     pub storage: Storage,
     pub router: Router,
     pub alerts: Alerts,
+    pub advisor: Advisor,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -227,6 +228,15 @@ pub struct Alerts {
     pub cooldown_s: u64,
 }
 
+/// Readiness advisor (docs/ADVISOR.md).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Advisor {
+    /// Risk codes the user accepts. An accepted risk is never reported (`linkwatch check`, run events).
+    /// Blocking items cannot be accepted. Codes: see `readiness::CODES`.
+    pub accept: Vec<String>,
+}
+
 impl Default for Alerts {
     fn default() -> Self {
         Self {
@@ -255,6 +265,7 @@ impl Default for Config {
             storage: Storage::default(),
             router: Router::default(),
             alerts: Alerts::default(),
+            advisor: Advisor::default(),
         }
     }
 }
@@ -462,6 +473,13 @@ impl Config {
         if let Some(u) = &self.router.upnp_url {
             crate::router::parse_http_url(u)?;
         }
+        for code in &self.advisor.accept {
+            anyhow::ensure!(
+                crate::readiness::is_acceptable(code),
+                "advisor.accept: {code:?} is not an acceptable risk code (acceptable: {})",
+                crate::readiness::acceptable_codes().join(", ")
+            );
+        }
         anyhow::ensure!((5..=86_400).contains(&self.alerts.min_outage_s), "alerts.min_outage_s must be 5..=86400");
         anyhow::ensure!((10..=86_400).contains(&self.alerts.cooldown_s), "alerts.cooldown_s must be 10..=86400");
         if self.alerts.enabled {
@@ -588,6 +606,17 @@ mod tests {
         assert_eq!(sp.peak_interval_min, sp.interval_min);
         // 4 tests per day, 50 MiB each, per interface.
         assert!(24 * 60 / sp.interval_min * sp.max_bytes <= 200 * 1024 * 1024);
+    }
+
+    #[test]
+    fn advisor_accept_parses_and_rejects_unknown_code() {
+        let c = Config::from_toml("[advisor]\naccept = [\"no_wired_path\", \"vpn_active\"]").unwrap();
+        c.validate().unwrap();
+        assert_eq!(c.advisor.accept.len(), 2);
+        for bad in ["[advisor]\naccept = [\"typo\"]", "[advisor]\naccept = [\"icmp_permission\"]"] {
+            assert!(Config::from_toml(bad).unwrap().validate().is_err(), "{bad}");
+        }
+        assert!(toml::from_str::<Config>("[advisor]\nnope = 1").is_err());
     }
 
     #[test]

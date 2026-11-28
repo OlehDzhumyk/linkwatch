@@ -14,14 +14,24 @@ pub enum Level {
 }
 
 pub struct Item {
+    /// Stable readiness code (docs/ADVISOR.md); empty when the item has no readiness meaning.
+    pub code: &'static str,
     pub level: Level,
     pub name: String,
     pub detail: String,
     pub fix: Option<String>,
 }
 
-fn item(level: Level, name: impl Into<String>, detail: impl Into<String>, fix: Option<&str>) -> Item {
-    Item { level, name: name.into(), detail: detail.into(), fix: fix.map(String::from) }
+pub(crate) fn item(level: Level, name: impl Into<String>, detail: impl Into<String>, fix: Option<&str>) -> Item {
+    Item { code: "", level, name: name.into(), detail: detail.into(), fix: fix.map(String::from) }
+}
+
+impl Item {
+    /// Sets the readiness code.
+    pub(crate) fn code(mut self, code: &'static str) -> Self {
+        self.code = code;
+        self
+    }
 }
 
 fn read_trim(p: &str) -> Option<String> {
@@ -48,7 +58,7 @@ pub async fn check(cfg: &Config) -> Vec<Item> {
                 "icmp permission",
                 format!("ping_group_range {r}, gid {gid}"),
                 (!ok).then_some("sysctl -w net.ipv4.ping_group_range='0 2147483647' (see deploy/90-linkwatch.conf)"),
-            ));
+            ).code("icmp_permission"));
         }
         None => out.push(item(Level::Warn, "icmp permission", "cannot read ping_group_range", None)),
     }
@@ -108,7 +118,7 @@ pub async fn check(cfg: &Config) -> Vec<Item> {
             "arp (same subnet)",
             format!("arp_ignore={ai} arp_announce={aa}"),
             (!ok).then_some("install deploy/90-linkwatch.conf to /etc/sysctl.d and run `sysctl --system` (done by install.sh)"),
-        ));
+        ).code("path_isolation"));
     }
 
     // Wi-Fi via nl80211.
@@ -130,7 +140,7 @@ pub async fn check(cfg: &Config) -> Vec<Item> {
                         format!("wifi power_save {name}"),
                         "power_save is ON (adds RTT jitter)",
                         Some(&format!("sudo iw dev {name} set power_save off (or set NetworkManager wifi.powersave = 2)")),
-                    ));
+                    ).code("wifi_power_save"));
                 }
                 // H18: the world domain "00" limits TX power and forbids active use of some 5 GHz channels.
                 if let Ok(Some(cc)) = nl.reg_alpha2(name) {
@@ -166,9 +176,9 @@ pub async fn check(cfg: &Config) -> Vec<Item> {
     match std::fs::create_dir_all(dd).and_then(|_| tempfile_probe(dd)) {
         Ok(free) => {
             let lvl = if free < cfg.storage.min_free_bytes { Level::Warn } else { Level::Ok };
-            out.push(item(lvl, "data dir", format!("{} writable, {:.1} GB free", dd.display(), free as f64 / 1e9), (lvl != Level::Ok).then_some("free space or set data_dir elsewhere")));
+            out.push(item(lvl, "data dir", format!("{} writable, {:.1} GB free", dd.display(), free as f64 / 1e9), (lvl != Level::Ok).then_some("free space or set data_dir elsewhere")).code("disk_low"));
         }
-        Err(e) => out.push(item(Level::Fail, "data dir", format!("{}: {e}", dd.display()), Some("create it and give the service user write access, or set data_dir"))),
+        Err(e) => out.push(item(Level::Fail, "data dir", format!("{}: {e}", dd.display()), Some("create it and give the service user write access, or set data_dir")).code("data_dir")),
     }
 
     // Time sync matters for correlating with router logs and multi-observer compare.
@@ -192,7 +202,30 @@ pub async fn check(cfg: &Config) -> Vec<Item> {
         (Some(src), None) => (Level::Ok, format!("NTP synchronized ({src})"), None),
         (None, _) => (Level::Warn, "sync state unknown".into(), Some("enable chrony or systemd-timesyncd; timestamps are compared across observers and router logs")),
     };
-    out.push(item(lvl, "clock", detail, fix));
+    let clock_code = match (sync, chrony) {
+        (None, _) => "clock_unsynced",
+        (Some(_), Some(t)) if !t.synced => "clock_unsynced",
+        _ => "clock_loose",
+    };
+    out.push(item(lvl, "clock", detail, fix).code(clock_code));
+
+    // Wired reference path (readiness: no_wired_path).
+    for it in &mut out {
+        if it.name.starts_with("iface ") && it.name.ends_with("(Ethernet)") && it.level != Level::Ok {
+            it.code = "no_wired_path";
+        }
+    }
+    if !ifaces.iter().any(|(_, r)| *r == IfaceRole::Ethernet) {
+        out.push(
+            item(
+                Level::Warn,
+                "wired path",
+                "no Ethernet interface is monitored",
+                Some("connect a cable to a router LAN port (or list the NIC under [[interfaces]]) so Wi-Fi can be compared with a wired path"),
+            )
+            .code("no_wired_path"),
+        );
+    }
 
     // Web port.
     if cfg.web.enabled {
