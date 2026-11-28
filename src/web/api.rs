@@ -1429,6 +1429,23 @@ struct VerdictText {
     text: String,
 }
 
+/// A cached report with the verdict sentence of the current live verdict: the report may be up
+/// to [`REPORT_FRESH`] old, but its headline must never contradict the live status.
+fn with_live_verdict(rep: &ReportResponse, live: Option<Verdict>) -> Response {
+    if rep.verdict == live {
+        return json_body(rep);
+    }
+    let vt = explain_verdict(live, rep.network_incidents, rep.observer_incidents, &rep.ifaces);
+    let Ok(mut v) = serde_json::to_value(rep) else { return json_body(rep) };
+    if let Some(o) = v.as_object_mut() {
+        o.insert("verdict".into(), serde_json::to_value(live).unwrap_or_default());
+        o.insert("verdict_summary".into(), vt.text.into());
+        o.insert("verdict_code".into(), vt.code.into());
+        o.insert("verdict_args".into(), serde_json::to_value(vt.args).unwrap_or_default());
+    }
+    json_body(&v)
+}
+
 fn explain_verdict(verdict: Option<Verdict>, net_inc: u32, obs_inc: u32, ifaces: &[ReportIface]) -> VerdictText {
     let wifi_sig = ifaces
         .iter()
@@ -1628,13 +1645,15 @@ async fn report(State(st): State<AppState>, Query(q): Query<ReportQuery>) -> Api
     };
     // No verdict in this key: a flapping live verdict must not defeat the rate limit.
     let fresh_key = dir.display().to_string();
-    if let Some(hit) = st.reports.lock().unwrap_or_else(|e| e.into_inner()).get_fresh(&fresh_key) {
-        return Ok(json_body(&*hit));
+    let hit = st.reports.lock().unwrap_or_else(|e| e.into_inner()).get_fresh(&fresh_key);
+    if let Some(hit) = hit {
+        return Ok(with_live_verdict(&hit, live_verdict));
     }
     // One analysis at a time: viewers that arrive while it runs wait and then hit the cache.
     let _build = st.report_build.lock().await;
-    if let Some(hit) = st.reports.lock().unwrap_or_else(|e| e.into_inner()).get_fresh(&fresh_key) {
-        return Ok(json_body(&*hit));
+    let hit = st.reports.lock().unwrap_or_else(|e| e.into_inner()).get_fresh(&fresh_key);
+    if let Some(hit) = hit {
+        return Ok(with_live_verdict(&hit, live_verdict));
     }
     let cache = st.reports.clone();
     let rep = blocking(&st, move || {
