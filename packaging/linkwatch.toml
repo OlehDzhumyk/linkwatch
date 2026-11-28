@@ -20,8 +20,10 @@ listen = "127.0.0.1:8080"
 # token = "change-me-to-a-long-random-string"
 
 [speed]
-# Time-based download test (about 8 s per interface; at 300 Mbit/s that is ~300 MB per test).
-# Every 60 min, every 30 min in the evening peak. Set enabled = false to save traffic.
+# Time-based download test: at most 8 s and at most 50 MiB per interface per test.
+# Every 6 h (4 tests per day), one interface at a time, no evening speed-up.
+# Daily volume = 4 tests x 50 MiB x interfaces (for example 400 MiB with 2 interfaces).
+# Set enabled = false to save traffic. Options: interval_min, peak_interval_min, max_bytes.
 enabled = true
 
 [intervals]

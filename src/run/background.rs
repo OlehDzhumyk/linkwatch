@@ -77,6 +77,8 @@ pub(super) async fn isp_loop(ctx: Ctx) -> anyhow::Result<()> {
                 }
             }
         }
+        // `discover_isp_hop` returns only hops that answered echo; a silent or
+        // private (second NAT) hop is logged there and leaves `isp_known = false`.
         let prev = ctx.isp();
         if let Some(h) = found
             && prev != Some(h) {

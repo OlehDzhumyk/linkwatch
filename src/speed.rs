@@ -758,7 +758,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "real download on wlo1 (max 8 s / 300 MB)"]
+    #[ignore = "real download on wlo1 (max 8 s / 50 MB)"]
     async fn real_download() {
         let c = crate::config::Speed::default();
         let o = Opts { max_bytes: c.max_bytes, timeout: Duration::from_secs(c.timeout_s), duration: Duration::from_secs(c.duration_s), warmup: Duration::from_millis(c.warmup_ms) };

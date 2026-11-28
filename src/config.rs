@@ -280,15 +280,17 @@ impl Default for Speed {
                 "http://ipv4.download.thinkbroadband.com/1GB.zip".into(),
                 "http://proof.ovh.net/files/1Gb.dat".into(),
             ],
-            // About 8 s at 300 Mbit/s; slower links stop at `duration_s` first.
-            max_bytes: 300 * 1024 * 1024,
+            // Stops the download at 50 MiB; slower links stop at `duration_s` first.
+            max_bytes: 50 * 1024 * 1024,
             timeout_s: 30,
             duration_s: 8,
             warmup_ms: 1500,
-            interval_min: 60,
+            // 4 tests per day. At most 4 x 50 MiB = 200 MiB per day per interface.
+            interval_min: 360,
+            // The evening peak window is kept, but it is not faster by default.
             peak_start: "18:00".into(),
             peak_end: "00:00".into(),
-            peak_interval_min: 30,
+            peak_interval_min: 360,
             first_after_s: 60,
         }
     }
@@ -464,6 +466,16 @@ mod tests {
         for t in [include_str!("../examples/linkwatch.toml"), include_str!("../packaging/linkwatch.toml")] {
             Config::from_toml(t).unwrap().validate().unwrap();
         }
+    }
+
+    #[test]
+    fn speed_defaults_are_light() {
+        let sp = Speed::default();
+        assert_eq!(sp.max_bytes, 50 * 1024 * 1024);
+        assert_eq!(sp.interval_min, 360);
+        assert_eq!(sp.peak_interval_min, sp.interval_min);
+        // 4 tests per day, 50 MiB each, per interface.
+        assert!(24 * 60 / sp.interval_min * sp.max_bytes <= 200 * 1024 * 1024);
     }
 
     #[test]

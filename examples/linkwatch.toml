@@ -86,21 +86,24 @@ enabled = true
 # Plain http:// URLs of large files, tried in order until one works.
 # Omit to use the built-in list.
 # urls = ["http://speed.example.net/50MB.bin"]
-# Stop each test after this many bytes (300 MiB).
-max_bytes = 314572800
+# Stop each test after this many bytes (50 MiB). The download stops when it reaches the cap.
+max_bytes = 52428800
 # Whole request limit per URL (DNS, connect, headers, body), seconds.
 timeout_s = 30
 # Time-based test: read the body for this many seconds after its first byte.
 duration_s = 8
 # The first part of the body is TCP warm-up and is not counted in mbps (milliseconds).
 warmup_ms = 1500
-# Interval between tests in minutes (outside the peak window).
-interval_min = 60
+# Interval between tests in minutes (outside the peak window). 360 = 4 tests per day.
+# Daily volume = tests/day x max_bytes x interfaces, for example 4 x 50 MiB x 2 = 400 MiB.
+# Tests run on one interface at a time. Short intervals with a large cap give many GB per day.
+interval_min = 360
 # Peak window in local time "HH:MM". The end can be before the start (wraps midnight).
 peak_start = "18:00"
 peak_end = "00:00"
-# Interval between tests in minutes inside the peak window.
-peak_interval_min = 30
+# Interval inside the peak window. Same as interval_min by default (no evening speed-up).
+# Set a lower value (for example 30) to test more often in the evening. This raises the daily volume.
+peak_interval_min = 360
 # Delay of the first test after start, in seconds.
 first_after_s = 60
 
