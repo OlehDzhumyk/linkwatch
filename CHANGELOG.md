@@ -2,9 +2,17 @@
 
 All notable changes to `linkwatch` are documented in this file.
 
-## [Unreleased]
+## [0.7.0] - 2026-11-28
 
 ### Added
+- **Incident detective** (`src/analyze/attribution.rs`, [docs/INCIDENT-ATTRIBUTION.md](docs/INCIDENT-ATTRIBUTION.md)):
+  each incident gets a graded attribution (`network`, `network_despite_host`, `mixed`,
+  `observer_likely`, `observer_confirmed`) from the scope, dose, timing and counter-evidence of
+  ten host effects, the seconds explained by the host and by the network, an evidence list,
+  what would change the result, and likely network causes (router reboot, WAN down, router
+  log, AP disconnect, channel switch, carrier loss, roam, DHCP, weak signal, busy channel).
+  Shown in the web report incident rows and the Markdown outage table; 34 scenario tests and
+  5 end-to-end tests.
 - `linkwatch check --deep`: timer jitter, loopback RTT, CPU/IO pressure (PSI) and a per-interface
   path proof (replies must arrive on the interface that sent the probe).
 - `linkwatch calibrate [--seconds N]`: idle baseline of every path (gateway RTT p50/p95/p99,
@@ -15,6 +23,9 @@ All notable changes to `linkwatch` are documented in this file.
 - Release archives include `docs/INSTALL.md`.
 
 ### Fixed
+- A small host effect no longer hides a long network outage, and a host effect that
+  cannot cause the symptom (a Wi-Fi scan beside a cable outage, a driver reset after the
+  outage began) no longer excludes it. Removed checks for host alerts that were never emitted.
 - Clock sync with chrony: the daemon is asked for its real state (stratum, offset, max error)
   over its read-only UDP command port, so a running but unsynchronized `chronyd` is reported.
 

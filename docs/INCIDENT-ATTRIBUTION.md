@@ -122,7 +122,9 @@ Decision, in this order:
    - `0.1 ≤ r < 0.8` → `mixed`.
    - `r < 0.1` → `network_despite_host`.
 
-`mixed` reports `host_explained_s` and `network_s = duration − host_explained_s`.
+`mixed` reports `host_explained_s` and `network_s = duration − host_explained_s`. A load
+incident (`speed_test` contradicted by another failing path) is the exception: the host
+provoked it and the network really failed under that load, so `network_s = duration`.
 
 Confidence of `network`, `network_despite_host` and `mixed`:
 - `high`: another path failed, a router log line, or an AP disconnect.

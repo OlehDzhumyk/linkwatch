@@ -159,6 +159,8 @@ fn a15_both_out_during_speed_test_is_load_incident() {
     let r = attribute(&f);
     assert_eq!(r.attribution, Attribution::Mixed, "{r:#?}");
     assert_eq!(r.main_suspect, Some(Suspect::SpeedTest), "{r:#?}");
+    // Provoked by the host, failed in the network: both sides get the whole outage.
+    assert!(near(r.network_s, 6.0) && near(r.host_s, 6.0), "{r:#?}");
 }
 
 #[test]

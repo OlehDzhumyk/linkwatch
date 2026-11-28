@@ -389,7 +389,9 @@ pub fn attribute(f: &IncidentFacts) -> Finding {
     // Strongest suspect first; among equals the one that explains more.
     let main = cands.iter().max_by(|a, b| a.strength.cmp(&b.strength).then(a.explains_s.total_cmp(&b.explains_s)));
     let Some(main) = main else {
-        let flip = (confidence < Confidence::High).then(|| crate::msg!("a_flip_unconfirmed", "Nothing independent confirms it: a second path or the router log would make this certain."));
+        // Only a single path with nothing independent needs the hint; a healthy second path
+        // already makes the network result plausible.
+        let flip = (confidence == Confidence::Low).then(|| crate::msg!("a_flip_unconfirmed", "Nothing independent confirms it: a second path or the router log would make this certain."));
         return Finding { attribution: Attribution::Network, confidence, host_s: 0.0, network_s: d, main_suspect: None, evidence, flip, network_causes: causes };
     };
     let host_s = cands.iter().map(|c| c.explains_s).fold(0.0, f64::max).min(d);
@@ -411,6 +413,9 @@ pub fn attribute(f: &IncidentFacts) -> Finding {
     };
     let (host_s, network_s) = match attribution {
         Attribution::Network | Attribution::NetworkDespiteHost => (if attribution == Attribution::Network { 0.0 } else { host_s }, d),
+        // A load incident: our speed test provoked it, but the network really failed under
+        // that load, so the whole outage also counts for the network.
+        Attribution::Mixed if counter && main.suspect == Suspect::SpeedTest => (host_s, d),
         Attribution::Mixed => (host_s, (d - host_s).max(0.0)),
         Attribution::ObserverLikely | Attribution::ObserverConfirmed => (d, 0.0),
     };
