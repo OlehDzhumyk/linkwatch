@@ -2,6 +2,22 @@
 
 All notable changes to `linkwatch` are documented in this file.
 
+## [0.11.0] - 2026-11-28
+
+### Added
+- `analyze`, `compare`, `support-report --reclassify`: replays the current classifier over the
+  recorded probe results, so classifier fixes reach old sessions. On a real DOCSIS night a
+  dual-path drop recorded as `line_problem` (ISP hop never answered echo) becomes
+  `internet_problem`. Golden tests check both ways (`expect-reclassified.json`).
+- **Masking phase 2 (session-wide limits):** power-save share (M4), monitor gaps (M9), a
+  polluted observer caps every network confidence at `medium` (M10), own heavy traffic in the
+  evening (M13) and frequent own evening speed tests (M6) are listed once in "Session-wide
+  limits" (Markdown) and under the KPI tiles (web).
+
+### Changed
+- Observer Trust: Wi-Fi power-save under 5 % of the session is `caution`, not `polluted`
+  (same tolerance as the session-wide limit).
+
 ## [0.10.1] - 2026-11-28
 
 ### Fixed

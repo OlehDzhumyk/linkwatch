@@ -1,6 +1,6 @@
 [package]
 name = "linkwatch"
-version = "0.10.1"
+version = "0.11.0"
 edition = "2024"
 description = "Per-second network path monitor: find out whether drops come from Wi-Fi, the router, the line or the internet."
 license-file = "LICENSE.md"

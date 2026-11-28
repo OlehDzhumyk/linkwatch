@@ -1066,6 +1066,7 @@ impl Analyzer {
         rep.observer_findings = texts(&rep.observer_findings_msg);
         rep.observer_trust = observer_trust(&TrustInputs {
             power_save_ifaces: self.host_power_save_ifaces.iter().cloned().collect(),
+            power_save_pct: (self.power_save_known > 0).then(|| self.power_save_on as f64 * 100.0 / self.power_save_known as f64),
             overrun_pct,
             throttled_samples: self.host_throttled_at.len() as u64,
             host_samples: self.host_samples,
@@ -1185,6 +1186,8 @@ pub(super) fn open_context(o: &OpenEp) -> Vec<Msg> {
 #[derive(Debug, Default)]
 pub(super) struct TrustInputs {
     pub power_save_ifaces: Vec<String>,
+    /// Share of power-save readings that were "on" (percent); `None` when unknown.
+    pub power_save_pct: Option<f64>,
     /// Late ticks in percent of all ticks (worst interface).
     pub overrun_pct: f64,
     pub throttled_samples: u64,
@@ -1202,7 +1205,10 @@ pub(super) fn observer_trust(i: &TrustInputs) -> ObserverTrust {
     let mut polluted = Vec::new();
     let mut caution = Vec::new();
     if !i.power_save_ifaces.is_empty() {
-        polluted.push(crate::msg!("t_power_save", "Wi-Fi power-save was on ({ifs}) during the run: RTT and jitter are inflated.", ifs = i.power_save_ifaces.join(", ")));
+        let m = crate::msg!("t_power_save", "Wi-Fi power-save was on ({ifs}) during the run: RTT and jitter are inflated.", ifs = i.power_save_ifaces.join(", "));
+        // Same tolerance as the session blind (masking M4): a short power-save spell is a
+        // caution, not a polluted observer.
+        if i.power_save_pct.is_none_or(|p| p >= POWER_SAVE_BLIND_PCT) { polluted.push(m) } else { caution.push(m) }
     }
     let pct = format!("{:.1}", i.overrun_pct);
     if i.overrun_pct >= 1.0 {

@@ -854,3 +854,11 @@ fn m6_frequent_evening_speed_tests_blind_isp_and_rare_ones_do_not() {
     assert!(!blind_codes(&evening_report(0, 1)).contains(&"sb_own_speed_tests"));
     assert!(evening_report(0, 0).session_blinds.is_empty());
 }
+
+#[test]
+fn short_power_save_is_caution_not_polluted() {
+    let short = observer_trust(&TrustInputs { power_save_ifaces: vec!["wlo1".into()], power_save_pct: Some(2.0), host_samples: 100, ..Default::default() });
+    assert_eq!(short.level, TrustLevel::Caution, "{short:?}");
+    let long = observer_trust(&TrustInputs { power_save_ifaces: vec!["wlo1".into()], power_save_pct: Some(40.0), host_samples: 100, ..Default::default() });
+    assert_eq!(long.level, TrustLevel::Polluted, "{long:?}");
+}
