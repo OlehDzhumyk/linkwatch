@@ -461,6 +461,14 @@ impl Analyzer {
     }
 
     pub fn finish(mut self, router: &[RouterLine]) -> Report {
+        // Time-ordered vectors: the per-episode window lookups below use binary search.
+        // Stable sort, so equal timestamps keep their arrival order.
+        self.events.sort_by_key(|(t, _)| *t);
+        self.host_throttled_at.sort();
+        for a in self.ifs.values_mut() {
+            a.signal.sort_by_key(|(t, _)| *t);
+            a.busy.sort_by_key(|(t, _)| *t);
+        }
         let tick = Duration::milliseconds((self.opts.tick_s * 1000.0) as i64);
         let tick_s = self.opts.tick_s;
         let overrun_pct = self
@@ -521,6 +529,7 @@ impl Analyzer {
                 }
             }
         }
+        router_reboots.sort();
         let isp_known = self.isp_seen;
         for (ep, flags) in self.episodes.iter_mut() {
             let need = (ep.duration_s / 2.0).min(3.0 * tick_s).max(tick_s * 0.99);
@@ -548,12 +557,10 @@ impl Analyzer {
             });
 
             // Observer vs network incident attribution (docs/INCIDENT-ATTRIBUTION.md).
-            let near = |t: &DateTime<Utc>| *t >= ep.start - Duration::seconds(HOST_NEAR_BEFORE_S) && *t <= ep.end + Duration::seconds(HOST_NEAR_AFTER_S);
-            let ap_disconnect = self.events.iter().any(|(t, ev)| {
-                matches!(ev, EventKind::WifiDisconnect { iface, by_ap, timed_out, .. } if *iface == ep.iface && (*by_ap == Some(true) || *timed_out))
-                    && *t >= ep.start - Duration::seconds(AP_DISCONNECT_WINDOW_S)
-                    && *t <= ep.end + Duration::seconds(AP_DISCONNECT_WINDOW_S)
-            });
+            let (near_lo, near_hi) = (ep.start - Duration::seconds(HOST_NEAR_BEFORE_S), ep.end + Duration::seconds(HOST_NEAR_AFTER_S));
+            let ap_disconnect = in_window(&self.events, ep.start - Duration::seconds(AP_DISCONNECT_WINDOW_S), ep.end + Duration::seconds(AP_DISCONNECT_WINDOW_S))
+                .iter()
+                .any(|(_, ev)| matches!(ev, EventKind::WifiDisconnect { iface, by_ap, timed_out, .. } if *iface == ep.iface && (*by_ap == Some(true) || *timed_out)));
             let router_hit = router.iter().any(|r| {
                 r.ts >= ep.start - Duration::seconds(ROUTER_LOG_WINDOW_S) && r.ts <= ep.end + Duration::seconds(ROUTER_LOG_WINDOW_S)
             });
@@ -566,17 +573,19 @@ impl Analyzer {
                 speedtest_ticks: flags.speedtest,
                 self_traffic_ticks: flags.self_traffic,
                 overrun_ticks: flags.overrun_ticks,
-                suspend_near: self.events.iter().any(|(t, ev)| {
-                    matches!(ev, EventKind::SuspendGap { .. }) && *t >= ep.start - Duration::seconds(SUSPEND_WINDOW_S) && *t <= ep.end + Duration::seconds(SUSPEND_WINDOW_S)
-                }),
-                driver_reset_offset_s: self
-                    .events
+                suspend_near: in_window(&self.events, ep.start - Duration::seconds(SUSPEND_WINDOW_S), ep.end + Duration::seconds(SUSPEND_WINDOW_S))
                     .iter()
-                    .filter(|(t, ev)| near(t) && matches!(ev, EventKind::HostAlert { alert: HostAlertKind::DriverReset, detail, iface } if host_alert_iface(iface.as_deref(), detail) == Some(ep.iface.as_str())))
+                    .any(|(_, ev)| matches!(ev, EventKind::SuspendGap { .. })),
+                driver_reset_offset_s: in_window(&self.events, near_lo, near_hi)
+                    .iter()
+                    .filter(|(_, ev)| matches!(ev, EventKind::HostAlert { alert: HostAlertKind::DriverReset, detail, iface } if host_alert_iface(iface.as_deref(), detail) == Some(ep.iface.as_str())))
                     .map(|(t, _)| (*t - ep.start).num_milliseconds() as f64 / 1000.0)
                     .reduce(f64::min),
-                throttled_near: self.host_throttled_at.iter().any(near),
-                low_memory_near: self.events.iter().any(|(t, ev)| near(t) && matches!(ev, EventKind::HostAlert { alert: HostAlertKind::LowMemory, .. })),
+                throttled_near: {
+                    let (lo, hi) = (self.host_throttled_at.partition_point(|t| *t < near_lo), self.host_throttled_at.partition_point(|t| *t <= near_hi));
+                    lo < hi
+                },
+                low_memory_near: in_window(&self.events, near_lo, near_hi).iter().any(|(_, ev)| matches!(ev, EventKind::HostAlert { alert: HostAlertKind::LowMemory, .. })),
                 power_save_on: self.host_power_save_ifaces.contains(&ep.iface),
                 other_failed: others
                     .iter()
@@ -597,20 +606,20 @@ impl Analyzer {
                 clock_unsynced: self.host_clock_unsynced,
             };
             let ev_near = |s: i64, e: i64, pred: &dyn Fn(&EventKind) -> bool| {
-                self.events.iter().any(|(t, ev)| *t >= ep.start - Duration::seconds(s) && *t <= ep.end + Duration::seconds(e) && pred(ev))
+                in_window(&self.events, ep.start - Duration::seconds(s), ep.end + Duration::seconds(e)).iter().any(|(_, ev)| pred(ev))
             };
             let mut facts = facts;
             facts.clock_jump_near = ev_near(CLOCK_JUMP_WINDOW_S, CLOCK_JUMP_WINDOW_S, &|ev| matches!(ev, EventKind::ClockJump { .. }));
             facts.channel_switch_near = ev_near(CHANNEL_CHANGE_BEFORE_S, CHANNEL_CHANGE_AFTER_S, &|ev| matches!(ev, EventKind::ChannelChange { iface, .. } if *iface == ep.iface));
             facts.roam_near = ev_near(ROAM_BEFORE_S, ROAM_AFTER_S, &|ev| matches!(ev, EventKind::Roam { iface, .. } if *iface == ep.iface));
             facts.carrier_loss_near = ev_near(CARRIER_LOSS_WINDOW_S, CARRIER_LOSS_WINDOW_S, &|ev| matches!(ev, EventKind::LinkChange { iface, from, to } if *iface == ep.iface && from.carrier && !to.carrier));
-            facts.router_reboot_near = router_reboots.iter().any(|t| *t >= ep.start - Duration::seconds(ROUTER_REBOOT_WINDOW_S) && *t <= ep.end + Duration::seconds(ROUTER_REBOOT_WINDOW_S));
-            facts.router_wan_down_near = router_wan_down.iter().any(|t| *t >= ep.start - Duration::seconds(ROUTER_WAN_DOWN_WINDOW_S) && *t <= ep.end + Duration::seconds(ROUTER_WAN_DOWN_WINDOW_S));
+            facts.router_reboot_near = !in_window_times(&router_reboots, ep.start - Duration::seconds(ROUTER_REBOOT_WINDOW_S), ep.end + Duration::seconds(ROUTER_REBOOT_WINDOW_S)).is_empty();
+            facts.router_wan_down_near = !in_window_times(&router_wan_down, ep.start - Duration::seconds(ROUTER_WAN_DOWN_WINDOW_S), ep.end + Duration::seconds(ROUTER_WAN_DOWN_WINDOW_S)).is_empty();
             facts.no_ip = ep.state == PathState::NoIp;
             if let Some(a) = self.ifs.get(&ep.iface) {
                 let (w0, w1) = (ep.start - Duration::seconds(SIGNAL_WINDOW_S), ep.end + Duration::seconds(SIGNAL_WINDOW_S));
-                facts.signal_dbm = med64(&mut a.signal.iter().filter(|(t, _)| *t >= w0 && *t <= w1).map(|(_, s)| f64::from(*s)).collect::<Vec<_>>());
-                facts.busy_pct = med64(&mut a.busy.iter().filter(|(t, _)| *t >= w0 && *t <= w1).map(|(_, b)| *b).collect::<Vec<_>>());
+                facts.signal_dbm = med64(&mut in_window(&a.signal, w0, w1).iter().map(|(_, s)| f64::from(*s)).collect::<Vec<_>>());
+                facts.busy_pct = med64(&mut in_window(&a.busy, w0, w1).iter().map(|(_, b)| *b).collect::<Vec<_>>());
             }
             let finding = attribution::attribute(&facts);
             ep.speedtest_active = flags.speedtest > 0;
@@ -637,10 +646,7 @@ impl Analyzer {
         for (ep, _) in self.episodes.iter_mut() {
             let w0 = ep.start - Duration::seconds(ctx_s);
             let w1 = ep.end + Duration::seconds(ctx_s);
-            for (t, ev) in &self.events {
-                if *t < w0 || *t > w1 {
-                    continue;
-                }
+            for (t, ev) in in_window(&self.events, w0, w1) {
                 let at = t.with_timezone(&Local).format("%H:%M:%S").to_string();
                 let line = match ev {
                     EventKind::Roam { iface, from_bssid, to_bssid } if *iface == ep.iface => Some(crate::msg!("c_roam", "{at} roamed {from} → {to}",
@@ -690,13 +696,13 @@ impl Analyzer {
                 ep.note(crate::msg!("c_speedtest", "speed test running nearby"));
             }
             if let Some(a) = self.ifs.get(&ep.iface) {
-                let near: Vec<i32> = a.signal.iter().filter(|(t, _)| *t >= w0 && *t <= w1).map(|(_, s)| *s).collect();
+                let near: Vec<i32> = in_window(&a.signal, w0, w1).iter().map(|(_, s)| *s).collect();
                 let mut all: Vec<f64> = a.signal.iter().map(|(_, s)| *s as f64).collect();
                 if let (Some(min), Some(base)) = (near.iter().min(), med64(&mut all))
                     && (*min as f64) < base - 8.0 {
                         ep.note(crate::msg!("c_signal", "signal dropped to {min} dBm (usual {base})", min = min, base = format!("{base:.0}")));
                     }
-                let busy: Vec<f64> = a.busy.iter().filter(|(t, _)| *t >= w0 && *t <= w1).map(|(_, b)| *b).collect();
+                let busy: Vec<f64> = in_window(&a.busy, w0, w1).iter().map(|(_, b)| *b).collect();
                 let mut ball: Vec<f64> = a.busy.iter().map(|(_, b)| *b).collect();
                 if let (Some(mx), Some(base)) = (busy.iter().cloned().fold(None, |m: Option<f64>, x| Some(m.map_or(x, |m| m.max(x)))), med64(&mut ball))
                     && mx > (base + 25.0).max(60.0) {
@@ -1129,4 +1135,18 @@ pub(super) fn observer_trust(i: &TrustInputs) -> ObserverTrust {
     };
     polluted.extend(caution);
     ObserverTrust { level, reasons: polluted }
+}
+
+/// Slice of a time-sorted vector with `lo <= t <= hi` (both ends inclusive), by binary search.
+fn in_window<T>(v: &[(DateTime<Utc>, T)], lo: DateTime<Utc>, hi: DateTime<Utc>) -> &[(DateTime<Utc>, T)] {
+    let a = v.partition_point(|(t, _)| *t < lo);
+    let b = v.partition_point(|(t, _)| *t <= hi);
+    &v[a..b.max(a)]
+}
+
+/// Same as [`in_window`] for a sorted vector of bare timestamps.
+fn in_window_times(v: &[DateTime<Utc>], lo: DateTime<Utc>, hi: DateTime<Utc>) -> &[DateTime<Utc>] {
+    let a = v.partition_point(|t| *t < lo);
+    let b = v.partition_point(|t| *t <= hi);
+    &v[a..b.max(a)]
 }

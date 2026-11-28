@@ -108,3 +108,49 @@ fn week_long_session_two_ifaces() {
     );
     assert!(!rep.episodes.is_empty());
 }
+
+/// Many events and many episodes: the episode-to-event comparison must not be O(episodes x events).
+#[test]
+#[ignore = "perf measurement; run explicitly"]
+fn many_events_many_episodes() {
+    const EPISODES: i64 = 2_000;
+    const STEP: i64 = 300; // one 8 s outage per 300 s
+    const SECS: i64 = EPISODES * STEP;
+    const EVENT_EVERY: i64 = 12; // 50 000 events over the session
+    let t0 = DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+    let started = std::time::Instant::now();
+    let mut a = Analyzer::new(Opts::default());
+    let (mut events, mut bad_prev) = (0u64, false);
+    for i in 0..SECS {
+        let t = t0 + Duration::seconds(i);
+        let bad = (100..108).contains(&(i % STEP));
+        if bad != bad_prev {
+            bad_prev = bad;
+            let (from, to) = if bad { (PathState::Ok, PathState::LanDown) } else { (PathState::LanDown, PathState::Ok) };
+            a.push(&env(t, Record::Event(EventKind::StateChange { iface: "wlo1".into(), from, to, prev_duration_s: 100.0 })));
+            events += 1;
+        }
+        let st = if bad { PathState::LanDown } else { PathState::Ok };
+        a.push(&env(t, samp("wlo1", IfaceRole::Wifi, st, 3.0 + (i % 7) as f64)));
+        if i % EVENT_EVERY == 5 {
+            let ev = if (i / EVENT_EVERY) % 2 == 0 {
+                EventKind::Roam { iface: "wlo1".into(), from_bssid: Some("02:00:00:00:00:01".into()), to_bssid: Some("02:00:00:00:00:02".into()) }
+            } else {
+                EventKind::HostAlert { alert: HostAlertKind::HighCpu, detail: "cpu 95%".into(), iface: None }
+            };
+            a.push(&env(t, Record::Event(ev)));
+            events += 1;
+        }
+    }
+    let pushed = started.elapsed();
+    let rep = a.finish(&[]);
+    let total = started.elapsed();
+    println!(
+        "perf-many: {events} events, {} episodes; push {:.2}s, finish {:.2}s, total {:.2}s",
+        rep.episodes.len(),
+        pushed.as_secs_f64(),
+        (total - pushed).as_secs_f64(),
+        total.as_secs_f64(),
+    );
+    assert!(rep.episodes.len() >= 1_900);
+}
