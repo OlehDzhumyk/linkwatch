@@ -10,6 +10,7 @@ mod classify;
 mod compare;
 mod config;
 mod control;
+mod deepcheck;
 mod cve;
 mod host;
 mod hostcheck;
@@ -65,7 +66,12 @@ enum Cmd {
         no_web: bool,
     },
     /// Check permissions, interfaces and settings before a run.
-    Check,
+    Check {
+        /// Also run about 10 s of active self-tests: timer jitter, loopback RTT, CPU/IO
+        /// pressure, and proof that replies arrive on the interface that sent the probe.
+        #[arg(long)]
+        deep: bool,
+    },
     /// Print the effective configuration as TOML.
     Config,
     /// List recorded sessions.
@@ -145,7 +151,13 @@ fn main() -> ExitCode {
     let res = rt.block_on(async move {
         match cli.cmd {
             Cmd::Run { point, label, new_session, no_web } => run::run(cfg, run::RunOpts { point, label, new_session, no_web }).await.map(|_| true),
-            Cmd::Check => Ok(check::print(&check::check(&cfg).await)),
+            Cmd::Check { deep } => {
+                let mut items = check::check(&cfg).await;
+                if deep {
+                    items.extend(deepcheck::deep(&run::resolve_ifaces(&cfg), cfg.targets.gateway).await);
+                }
+                Ok(check::print(&items))
+            }
             Cmd::Config => {
                 println!("{}", toml::to_string_pretty(&cfg).unwrap_or_default());
                 Ok(true)
