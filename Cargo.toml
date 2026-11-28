@@ -36,8 +36,10 @@ uuid = { version = "1.29.3", features = ["v4"] }
 md-5 = "0.10"
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12"] }
 # Pure-Rust crypto provider (no C toolchain for musl/aarch64 builds). It is a pre-release and not
-# audited, so it is pinned exactly and used only for the on-demand CVE lookup over public HTTPS
-# (no secrets are sent; certificates are verified against webpki-roots). Review on every bump.
+# audited, so it is pinned exactly. It is used for two things: the on-demand CVE lookup over
+# public HTTPS, and the notification webhooks in src/notify.rs. Webhook requests can carry a
+# bearer token, so secrets DO travel over this TLS stack. Certificates are verified against
+# webpki-roots. Review on every bump.
 rustls-rustcrypto = "=0.1.0-pre.0"
 snmp2 = { version = "0.5.3", default-features = false, features = ["tokio", "crypto-rust"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["tls12"] }
