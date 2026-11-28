@@ -5,6 +5,7 @@ import type { ReportEpisode } from "./ReportEpisode.js";
 import type { ReportIface } from "./ReportIface.js";
 import type { ReportLan } from "./ReportLan.js";
 import type { ReportRouter } from "./ReportRouter.js";
+import type { SessionBlind } from "./SessionBlind.js";
 import type { Verdict } from "./Verdict.js";
 
 /**
@@ -23,4 +24,8 @@ findings: Array<Msg>, patterns: Array<Msg>, observer_findings: Array<Msg>,
 /**
  * Observer Trust Score of the session (`clean | caution | polluted` + reasons).
  */
-observer_trust: ObserverTrust, router: ReportRouter | null, lan: ReportLan | null, };
+observer_trust: ObserverTrust, 
+/**
+ * Conditions that blind one element for the whole session (reported once).
+ */
+session_blinds: Array<SessionBlind>, router: ReportRouter | null, lan: ReportLan | null, };

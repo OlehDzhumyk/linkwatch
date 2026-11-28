@@ -78,6 +78,12 @@ pub fn to_markdown(r: &Report) -> String {
             let _ = writeln!(s, "- {x}");
         }
     }
+    if !r.session_blinds.is_empty() {
+        let _ = writeln!(s, "\n## Session-wide limits\n");
+        for b in &r.session_blinds {
+            let _ = writeln!(s, "- {}", b.msg.text);
+        }
+    }
     if !r.security_events.is_empty() {
         let _ = writeln!(s, "\n## Security events\n");
         for x in r.security_events.iter().take(200) {

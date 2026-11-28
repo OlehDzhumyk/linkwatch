@@ -1316,6 +1316,8 @@ pub(crate) struct ReportResponse {
     pub observer_findings: Vec<Msg>,
     /// Observer Trust Score of the session (`clean | caution | polluted` + reasons).
     pub observer_trust: crate::analyze::ObserverTrust,
+    /// Conditions that blind one element for the whole session (reported once).
+    pub session_blinds: Vec<crate::analyze::SessionBlind>,
     pub router: Option<ReportRouter>,
     pub lan: Option<ReportLan>,
 }
@@ -1583,6 +1585,7 @@ fn analyze_session_dir(dir: &Path, id: String, live_verdict: Option<Verdict>) ->
         patterns: rep.patterns_msg,
         observer_findings: rep.observer_findings_msg,
         observer_trust: rep.observer_trust,
+        session_blinds: rep.session_blinds,
         router: rep.router.map(|r| ReportRouter {
             samples: r.samples,
             model: r.model,
@@ -1639,6 +1642,7 @@ async fn report(State(st): State<AppState>, Query(q): Query<ReportQuery>) -> Api
             patterns: Vec::new(),
             observer_findings: Vec::new(),
             observer_trust: Default::default(),
+            session_blinds: Vec::new(),
             router: None,
             lan: None,
         }));

@@ -106,6 +106,17 @@ function renderKpis(rep) {
     }
     box.replaceChildren(...cards);
 }
+/** Session-wide limits (masking): what this session cannot prove, listed once. */
+function renderBlinds(rep) {
+    const box = byId("report-blinds");
+    const blinds = rep.session_blinds;
+    box.hidden = blinds.length === 0;
+    if (!blinds.length) {
+        box.replaceChildren();
+        return;
+    }
+    box.replaceChildren(el("p", { class: "blind-title", text: t("report.blinds") }), el("ul", null, ...blinds.map((b) => el("li", { text: tMsg(b.msg) }))));
+}
 function renderHourly(rep) {
     const box = byId("hourly-bars");
     const wrap = byId("hourly-wrap");
@@ -270,6 +281,7 @@ export function renderReport() {
     vEl.textContent = verdictSentence(rep);
     vEl.className = "verdict-explain " + verdictLabel(rep.verdict)[1];
     renderKpis(rep);
+    renderBlinds(rep);
     renderHourly(rep);
     renderIncidents(rep);
     renderFindings(rep);
