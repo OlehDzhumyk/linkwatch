@@ -23,6 +23,7 @@ fn samp(iface: &str, role: IfaceRole, state: PathState, gw_rtt: f64) -> Record {
         scan_active: false,
         t: None,
         freq_mhz: None,
+        pkt_delta: None,
     })
 }
 
@@ -633,4 +634,91 @@ fn roam_channel_change_overrun_and_suspend_attribution() {
     assert!(ep_roam.context.iter().any(|c| c.contains("channel changed")), "{:?}", ep_roam.context);
     assert_eq!(rep.network_incidents, 1, "{:#?}", rep.episodes);
     assert_eq!(rep.observer_incidents, 2, "{:#?}", rep.episodes);
+}
+
+#[test]
+fn host_own_traffic_excludes_stalls_and_short_drops() {
+    let t0 = DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+    let mut a = Analyzer::new(Opts::default());
+    for i in 0..300 {
+        let t = t0 + Duration::seconds(i);
+        // 60..160: the host downloads at ~40 Mbit/s (5 MB/s); RTT rises, one short drop at 100..104.
+        let load = (60..160).contains(&i);
+        let bad = (100..104).contains(&i);
+        let rtt = if load || i == 250 { 600.0 } else { 3.0 };
+        let mut r = samp("wlo1", IfaceRole::Wifi, if bad { PathState::LanDown } else { PathState::Ok }, rtt);
+        if let Record::Sample(s) = &mut r
+            && load
+            && !bad
+        {
+            s.rx_delta = 5_000_000;
+        }
+        a.push(&env(t, r));
+        a.push(&env(t, samp("eth0", IfaceRole::Ethernet, PathState::Ok, 1.0)));
+    }
+    let r = a.finish(&[]);
+    let w = r.ifaces.iter().find(|i| i.iface == "wlo1").unwrap();
+    // Only the stall at 250 (no own traffic) counts.
+    assert_eq!(w.stalls, 1, "{w:#?}");
+    assert!(w.self_traffic_stalls >= 1, "{w:#?}");
+    assert!((w.self_traffic_s - 96.0).abs() < 1.1, "{}", w.self_traffic_s);
+    assert_eq!(r.observer_incidents, 1, "{r:#?}");
+    assert_eq!(r.network_incidents, 0, "{r:#?}");
+    assert!(r.observer_findings_msg.iter().any(|m| m.code == "o_self_traffic"), "{:?}", r.observer_findings);
+}
+
+#[test]
+fn small_packet_storm_counts_as_host_traffic() {
+    let t0 = DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+    let mut a = Analyzer::new(Opts::default());
+    for i in 0..200 {
+        let t = t0 + Duration::seconds(i);
+        // 50..120: ~3 Mbit/s but 5000 packets/s (torrent/DHT); RTT high, no loss.
+        let storm = (50..120).contains(&i);
+        let mut r = samp("wlo1", IfaceRole::Wifi, PathState::Ok, if storm { 600.0 } else { 3.0 });
+        if let Record::Sample(s) = &mut r {
+            s.pkt_delta = Some(if storm { 5000 } else { 12 });
+            if storm {
+                s.rx_delta = 375_000;
+            }
+        }
+        a.push(&env(t, r));
+    }
+    let r = a.finish(&[]);
+    let w = &r.ifaces[0];
+    assert_eq!(w.stalls, 0, "{w:#?}");
+    assert_eq!(w.self_traffic_stalls, 1, "{w:#?}");
+    assert!((w.self_traffic_s - 70.0).abs() < 1.1, "{}", w.self_traffic_s);
+}
+
+
+#[test]
+fn observer_trust_levels() {
+    let clean = observer_trust(&TrustInputs { host_samples: 100, ..Default::default() });
+    assert_eq!(clean.level, TrustLevel::Clean);
+    assert!(clean.reasons.is_empty());
+    let caution = observer_trust(&TrustInputs { overrun_pct: 0.3, observer_incidents: 2, host_samples: 100, ..Default::default() });
+    assert_eq!(caution.level, TrustLevel::Caution);
+    assert_eq!(caution.reasons.iter().map(|m| m.code.as_str()).collect::<Vec<_>>(), ["t_overrun", "t_observer_incidents"]);
+    let polluted = observer_trust(&TrustInputs { power_save_ifaces: vec!["wlo1".into()], clock_unsynced: true, ..Default::default() });
+    assert_eq!(polluted.level, TrustLevel::Polluted);
+    assert_eq!(polluted.reasons[0].code, "t_power_save");
+    assert_eq!(polluted.reasons[1].code, "t_ntp");
+    let thr = observer_trust(&TrustInputs { throttled_samples: 20, host_samples: 100, ..Default::default() });
+    assert_eq!(thr.level, TrustLevel::Polluted);
+}
+
+#[test]
+fn late_ticks_lower_observer_trust_in_report() {
+    let t0 = DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+    let mut a = Analyzer::new(Opts::default());
+    for i in 0..200 {
+        let mut r = samp("wlo1", IfaceRole::Wifi, PathState::Ok, 3.0);
+        if let Record::Sample(s) = &mut r {
+            s.overrun = i % 50 == 0;
+        }
+        a.push(&env(t0 + Duration::seconds(i), r));
+    }
+    let r = a.finish(&[]);
+    assert_eq!(r.observer_trust.level, TrustLevel::Polluted, "{:?}", r.observer_trust);
 }

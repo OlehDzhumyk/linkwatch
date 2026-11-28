@@ -12,6 +12,7 @@ mod config;
 mod control;
 mod cve;
 mod host;
+mod hostcheck;
 mod lan;
 mod link;
 mod live;

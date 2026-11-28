@@ -377,3 +377,27 @@ fn s11_different_networks_downgrade_readiness() {
     assert_eq!(pack.readiness.level, ReadinessLevel::Low);
     assert!(pack.readiness.warning_codes.contains(&"warn_network_mismatch".to_string()));
 }
+
+#[test]
+fn polluted_observer_lowers_readiness() {
+    let mut s = mk_session(
+        "late-ticks",
+        "Hall",
+        Some("B1/F1/R1"),
+        8.0,
+        vec![mk_iface("eth0", IfaceRole::Ethernet, 99.9, 0, None, None), mk_iface("wlo1", IfaceRole::Wifi, 99.9, 0, Some(-55.0), Some(5.0))],
+        vec![],
+    );
+    s.clock_synced = Some(true);
+    s.meta = Some(mk_meta("late-ticks", Some("B1/F1/R1"), Some("Hall"), None, Some(true)));
+    let opts = SupportOpts { audience: SupportAudience::Admin, lang: SupportLang::En, redaction: RedactionLevel::Standard, tolerance_s: 2.0 };
+    let clean = build_pack(&SupportInput { sessions: std::slice::from_ref(&s), site: None, router_audit: None, cve: None, router_log: &[] }, &opts);
+    assert!(!clean.readiness.warning_codes.iter().any(|c| c == "warn_observer_polluted"));
+    s.report.observer_trust = crate::analyze::ObserverTrust {
+        level: crate::analyze::TrustLevel::Polluted,
+        reasons: vec![Msg { code: "t_overrun".into(), text: "2.0% of probe ticks were late".into(), args: BTreeMap::new() }],
+    };
+    let p = build_pack(&SupportInput { sessions: std::slice::from_ref(&s), site: None, router_audit: None, cve: None, router_log: &[] }, &opts);
+    assert_eq!(p.readiness.level, ReadinessLevel::Low, "{:?}", p.readiness);
+    assert!(p.readiness.warning_codes.iter().any(|c| c == "warn_observer_polluted"));
+}

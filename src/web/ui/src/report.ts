@@ -4,10 +4,11 @@
 import type { ReportEpisode } from "./api/ReportEpisode.js";
 import type { ReportIface } from "./api/ReportIface.js";
 import type { ReportResponse } from "./api/ReportResponse.js";
+import type { TrustLevel } from "./api/TrustLevel.js";
 import { fetchReport } from "./client.js";
 import { byId, el } from "./dom.js";
 import { type Tone, fmtDur, fmtTime, fmtTimeShort, ms, secsSince, stateLabel, verdictLabel } from "./format.js";
-import { t, tDyn, tMsg } from "./i18n.js";
+import { type MsgKey, t, tDyn, tMsg } from "./i18n.js";
 import { availTone, dropsTone, pointLabel, progressText, statusChip } from "./points.js";
 import { LIVE, bus, state } from "./state.js";
 import { incidentsTone, sigTone } from "./status.js";
@@ -45,6 +46,12 @@ function kpi(label: string, tkey: TipKey | null, value: string, unit: string, su
     ...children);
 }
 
+const TRUST_KEY = {
+  clean: "report.trust.clean",
+  caution: "report.trust.caution",
+  polluted: "report.trust.polluted",
+} as const satisfies Record<TrustLevel, MsgKey>;
+
 const scrollTo = (id: string) => (): void => byId(id).scrollIntoView({ behavior: "smooth", block: "start" });
 
 function renderKpis(rep: ReportResponse): void {
@@ -78,6 +85,14 @@ function renderKpis(rep: ReportResponse): void {
   }
   if (rep.observer_incidents) {
     cards.push(kpi(t("report.obs_inc"), null, String(rep.observer_incidents), "", t("report.obs_excluded"), ""));
+  }
+  const trust = rep.observer_trust;
+  if (trust) {
+    const first = trust.reasons[0];
+    const more = trust.reasons.length > 1 ? " (+" + String(trust.reasons.length - 1) + ")" : "";
+    const sub = first ? tMsg(first) + more : t("report.trust_clean_sub");
+    const tone = trust.level === "polluted" ? "bad" : trust.level === "caution" ? "warn" : "ok";
+    cards.push(kpi(t("report.trust"), null, t(TRUST_KEY[trust.level]), "", sub, tone));
   }
   if (rep.router && rep.router.wan_rx_mbps_med !== null) {
     cards.push(kpi(t("report.wan_med"), "wan_traffic", rep.router.wan_rx_mbps_med.toFixed(1), "Mbit/s",

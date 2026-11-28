@@ -34,6 +34,11 @@ function kpi(label, tkey, value, unit, sub, tone, onclick) {
     // transparent button and the tip sits above it.
     return el("div", { class: "kpi kpi-link" }, el("button", { type: "button", class: "kpi-hit", "aria-label": label + ": " + value + (unit ? " " + unit : ""), onclick }), ...children);
 }
+const TRUST_KEY = {
+    clean: "report.trust.clean",
+    caution: "report.trust.caution",
+    polluted: "report.trust.polluted",
+};
 const scrollTo = (id) => () => byId(id).scrollIntoView({ behavior: "smooth", block: "start" });
 function renderKpis(rep) {
     const box = byId("report-kpis");
@@ -62,6 +67,14 @@ function renderKpis(rep) {
     }
     if (rep.observer_incidents) {
         cards.push(kpi(t("report.obs_inc"), null, String(rep.observer_incidents), "", t("report.obs_excluded"), ""));
+    }
+    const trust = rep.observer_trust;
+    if (trust) {
+        const first = trust.reasons[0];
+        const more = trust.reasons.length > 1 ? " (+" + String(trust.reasons.length - 1) + ")" : "";
+        const sub = first ? tMsg(first) + more : t("report.trust_clean_sub");
+        const tone = trust.level === "polluted" ? "bad" : trust.level === "caution" ? "warn" : "ok";
+        cards.push(kpi(t("report.trust"), null, t(TRUST_KEY[trust.level]), "", sub, tone));
     }
     if (rep.router && rep.router.wan_rx_mbps_med !== null) {
         cards.push(kpi(t("report.wan_med"), "wan_traffic", rep.router.wan_rx_mbps_med.toFixed(1), "Mbit/s", rep.router.wan_rx_mbps_p95 !== null ? t("report.p95", { v: rep.router.wan_rx_mbps_p95.toFixed(1) }) : null, ""));

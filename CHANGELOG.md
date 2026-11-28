@@ -2,6 +2,23 @@
 
 All notable changes to `linkwatch` are documented in this file.
 
+## [Unreleased]
+
+### Added
+- `linkwatch check` reads host settings that can imitate network faults (no root needed):
+  per-interface `rp_filter`, cable speed/duplex and NIC CRC errors, USB/PCIe power control,
+  active VPN/tunnel interfaces, conntrack fill and container bridges, two network managers,
+  blocked Wi-Fi radio, Bluetooth on 2.4 GHz, random MAC address, MTU < 1500, equal
+  default-route metrics, local-only DNS resolver, Wi-Fi country `00` (nl80211 `GET_REG`)
+  ([docs/HOST-ISOLATION-SCENARIOS.md](docs/HOST-ISOLATION-SCENARIOS.md) `H13`–`H24`).
+- Analyzer: the host's own traffic above 10 Mbit/s or 2000 packets/s (new `Sample.pkt_delta`) outside the speed test is not counted as
+  stalls, and short unconfirmed drops in that time are observer incidents
+  (`self_traffic_s`, `self_traffic_stalls`, finding `o_self_traffic`).
+
+- **Observer Trust Score** per session (`clean | caution | polluted` with reasons) in the
+  analyzer report, the Markdown report and a KPI tile of the web report; a polluted observer
+  lowers support-pack readiness (`warn_observer_polluted`).
+
 ## [0.5.0] - 2026-11-28
 
 ### Added

@@ -606,6 +606,7 @@ pub fn build_pack(input: &SupportInput<'_>, opts: &SupportOpts) -> SupportPack {
     let mut dual_path = false;
     let mut all_ntp_synced = !input.sessions.is_empty();
     let mut any_power_save = false;
+    let mut any_polluted = false;
     let mut any_gaps = false;
     let mut max_hours = 0.0f64;
     let mut min_tick_s = 1.0f64;
@@ -649,6 +650,12 @@ pub fn build_pack(input: &SupportInput<'_>, opts: &SupportOpts) -> SupportPack {
         }
         if s.report.observer_findings_msg.iter().any(|m| m.code == "o_power_save") {
             any_power_save = true;
+        }
+        // Power-save has its own warning; other host pollution (late ticks, throttling) too.
+        if s.report.observer_trust.level == crate::analyze::TrustLevel::Polluted
+            && s.report.observer_trust.reasons.iter().any(|m| m.code != "t_power_save")
+        {
+            any_polluted = true;
         }
         if !s.gaps.is_empty() || !s.report.monitor_gaps.is_empty() {
             any_gaps = true;
@@ -779,6 +786,10 @@ pub fn build_pack(input: &SupportInput<'_>, opts: &SupportOpts) -> SupportPack {
         warning_codes.push("warn_power_save".into());
         warnings.push(i18n::warn_power_save(lang).into());
     }
+    if any_polluted {
+        warning_codes.push("warn_observer_polluted".into());
+        warnings.push(i18n::warn_observer_polluted(lang).into());
+    }
     if !all_ntp_synced && !input.sessions.is_empty() {
         warning_codes.push("warn_ntp_unsynced".into());
         warnings.push(i18n::warn_ntp_unsynced(lang).into());
@@ -814,6 +825,7 @@ pub fn build_pack(input: &SupportInput<'_>, opts: &SupportOpts) -> SupportPack {
         || max_hours < 2.0
         || (opts.audience == SupportAudience::Isp && !has_wired)
         || any_power_save
+        || any_polluted
         || !all_ntp_synced
         || any_gaps;
     let is_high = !is_low && max_hours >= 6.0 && (dual_path || has_concurrent_dual_observers);

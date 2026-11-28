@@ -33,4 +33,9 @@ t?: string,
 /**
  * Operating Wi-Fi frequency (MHz) during this tick, when known.
  */
-freq_mhz?: number, };
+freq_mhz?: number, 
+/**
+ * Packets (rx + tx) since the previous sample: many small packets load Wi-Fi airtime even
+ * at a low byte rate (torrent/DHT, sync clients).
+ */
+pkt_delta?: number, };

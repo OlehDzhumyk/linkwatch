@@ -16,6 +16,7 @@ pub(super) struct OpenEp {
     hour_ticks: [u32; 24],
     scan: bool,
     speedtest: bool,
+    self_traffic: bool,
 }
 
 #[derive(Default)]
@@ -66,6 +67,10 @@ pub(super) struct IfAcc {
     reconnects: u32,
     stalls: u32,
     last_stall: Option<DateTime<Utc>>,
+    overrun_ticks: u64,
+    self_traffic_ticks: u64,
+    self_traffic_stalls: u32,
+    last_self_traffic: Option<DateTime<Utc>>,
     stall_events: Vec<(DateTime<Utc>, u64)>,
     loaded_gw: Vec<f32>,
     loaded_net: Vec<f32>,
@@ -86,6 +91,7 @@ pub(super) struct IfAcc {
 pub(super) struct EpFlags {
     scan: bool,
     speedtest: bool,
+    self_traffic: bool,
     overrun_ticks: u32,
     bands: BTreeMap<String, u32>,
     hour_ticks: [u32; 24],
@@ -273,6 +279,7 @@ impl Analyzer {
             return;
         }
         a.ticks += 1;
+        a.overrun_ticks += u64::from(s.overrun);
         if let Some(f) = s.freq_mhz {
             a.last_freq_mhz = Some(f);
         }
@@ -281,7 +288,22 @@ impl Analyzer {
         // Stalls: the path answers, but so late that users notice a freeze.
         let gw_slow = s.gw.as_ref().and_then(|g| g.rtt_ms).is_some_and(|r| r > self.opts.stall_gw_ms);
         let net_slow = s.net.rtt_ms.is_some_and(|r| r > self.opts.stall_net_ms);
-        if !s.speedtest_active && !s.scan_active && !is_bad(s.state) && (gw_slow || net_slow) {
+        // The host's own load (outside our speed test) on this interface. The previous tick
+        // counts too: a path that just failed carries no bytes, but the load caused it.
+        let heavy = !s.speedtest_active
+            && (s.rx_delta.saturating_add(s.tx_delta) as f64 * 8.0 / tick_s.max(0.2) >= self.opts.self_traffic_bps
+                || s.pkt_delta.is_some_and(|p| p as f64 / tick_s.max(0.2) >= self.opts.self_traffic_pps));
+        if heavy {
+            a.self_traffic_ticks += 1;
+            a.last_self_traffic = Some(ts);
+        }
+        let self_traffic = heavy || a.last_self_traffic.is_some_and(|l| (ts - l).num_seconds() <= gap);
+        if self_traffic && !s.speedtest_active && !s.scan_active && !is_bad(s.state) && (gw_slow || net_slow) {
+            if a.last_stall.is_none_or(|l| (ts - l).num_seconds() > gap) {
+                a.self_traffic_stalls += 1;
+            }
+            a.last_stall = Some(ts);
+        } else if !s.speedtest_active && !s.scan_active && !is_bad(s.state) && (gw_slow || net_slow) {
             if a.last_stall.is_none_or(|l| (ts - l).num_seconds() > gap) {
                 a.stalls += 1;
                 a.stall_events.push((ts, s.rx_delta.saturating_add(s.tx_delta)));
@@ -348,6 +370,7 @@ impl Analyzer {
             let flags = EpFlags {
                 scan: a.open.scan,
                 speedtest: a.open.speedtest,
+                self_traffic: a.open.self_traffic,
                 overrun_ticks: a.open.overrun_ticks,
                 bands,
                 hour_ticks: a.open.hour_ticks,
@@ -383,6 +406,7 @@ impl Analyzer {
                 a.open.overrun_ticks += u32::from(s.overrun);
                 a.open.scan |= s.scan_active;
                 a.open.speedtest |= s.speedtest_active;
+                a.open.self_traffic |= self_traffic;
                 a.open.hour_ticks[h] += 1;
                 if let Some(bname) = band {
                     *a.open.bands.entry(bname).or_default() += 1;
@@ -399,6 +423,12 @@ impl Analyzer {
     pub fn finish(mut self, router: &[RouterLine]) -> Report {
         let tick = Duration::milliseconds((self.opts.tick_s * 1000.0) as i64);
         let tick_s = self.opts.tick_s;
+        let overrun_pct = self
+            .ifs
+            .values()
+            .filter(|a| a.ticks > 0)
+            .map(|a| a.overrun_ticks as f64 * 100.0 / a.ticks as f64)
+            .fold(0.0, f64::max);
         // Close open episodes.
         for (n, a) in self.ifs.iter_mut() {
             if let (Some(st), Some(lb)) = (a.open.start, a.open.last_bad) {
@@ -409,6 +439,7 @@ impl Analyzer {
                 let flags = EpFlags {
                     scan: a.open.scan,
                     speedtest: a.open.speedtest,
+                    self_traffic: a.open.self_traffic,
                     overrun_ticks: a.open.overrun_ticks,
                     bands,
                     hour_ticks: a.open.hour_ticks,
@@ -498,6 +529,8 @@ impl Analyzer {
             // Our own speed test saturates the link; a short failure that overlaps it and that no
             // other path or the router log confirms is the observer's doing.
             let speedtest_obs = flags.speedtest && !corroborated && ep.duration_s <= 30.0;
+            // The same for the host's own heavy traffic (updates, backups, downloads).
+            let self_traffic_obs = flags.self_traffic && !corroborated && ep.duration_s <= 30.0;
             let overrun_obs = !router_hit && ep.ticks > 0 && flags.overrun_ticks * 2 >= ep.ticks;
             let near_suspend = self.events.iter().any(|(t, ev)| {
                 matches!(ev, EventKind::SuspendGap { .. })
@@ -526,6 +559,7 @@ impl Analyzer {
                 }));
             let is_observer = scan_obs
                 || speedtest_obs
+                || self_traffic_obs
                 || overrun_obs
                 || near_suspend
                 || near_undervolt_or_oom
@@ -737,6 +771,8 @@ impl Analyzer {
             r.speed_med_mbps = med64(&mut a.speed.iter().map(|(_, m)| *m).collect::<Vec<_>>());
             r.speed_peak_med_mbps = med64(&mut a.speed.iter().filter(|(t, _)| (18..24).contains(&local_hour(*t))).map(|(_, m)| *m).collect::<Vec<_>>());
             r.roams = a.roams;
+            r.self_traffic_s = a.self_traffic_ticks as f64 * tick_s;
+            r.self_traffic_stalls = a.self_traffic_stalls;
             r.tx_failed_total = a.tx_failed_total;
             r.beacon_loss_total = a.beacon_loss_total;
             if a.wifi_counter_secs > 0.0 {
@@ -860,10 +896,35 @@ impl Analyzer {
         {
             rep.observer_findings_msg.push(crate::msg!("o_temp", "Observer temperature peaked at {v}°C.", v = format!("{t:.1}")));
         }
+        let busy: Vec<String> = rep
+            .ifaces
+            .iter()
+            .filter(|i| i.self_traffic_s >= 60.0)
+            .map(|i| format!("{} ({:.0} min)", i.iface, i.self_traffic_s / 60.0))
+            .collect();
+        if !busy.is_empty() {
+            rep.observer_findings_msg.push(crate::msg!(
+                "o_self_traffic",
+                "The observer's own traffic was above {mbps} Mbit/s or {pps} packets/s outside speed tests on {ifs}; stalls and short drops in that time are not counted as network faults.",
+                mbps = format!("{:.0}", self.opts.self_traffic_bps / 1e6),
+                pps = format!("{:.0}", self.opts.self_traffic_pps),
+                ifs = busy.join(", "),
+            ));
+        }
         if rep.observer_incidents > 0 {
             rep.observer_findings_msg.push(crate::msg!("o_incidents", "{n} incident(s) attributed to the observer device (scan/overrun/suspend/throttling) and excluded from network totals.", n = rep.observer_incidents));
         }
         rep.observer_findings = texts(&rep.observer_findings_msg);
+        rep.observer_trust = observer_trust(&TrustInputs {
+            power_save_ifaces: self.host_power_save_ifaces.iter().cloned().collect(),
+            overrun_pct,
+            throttled_samples: self.host_throttled_at.len() as u64,
+            host_samples: self.host_samples,
+            clock_unsynced: self.host_clock_unsynced,
+            self_traffic_s: rep.ifaces.iter().map(|i| i.self_traffic_s).fold(0.0, f64::max),
+            observer_incidents: rep.observer_incidents,
+            max_cpu: self.host_max_cpu,
+        });
 
         if !self.router_samples.is_empty() {
             self.router_samples.sort_by_key(|(t, _)| *t);
@@ -963,4 +1024,61 @@ pub(super) fn open_context(o: &OpenEp) -> Vec<Msg> {
         v.push(crate::msg!("c_own_speed", "monitor's own speed test was running"));
     }
     v
+}
+
+/// What [`observer_trust`] needs from a finished analysis.
+#[derive(Debug, Default)]
+pub(super) struct TrustInputs {
+    pub power_save_ifaces: Vec<String>,
+    /// Late ticks in percent of all ticks (worst interface).
+    pub overrun_pct: f64,
+    pub throttled_samples: u64,
+    pub host_samples: u64,
+    pub clock_unsynced: bool,
+    /// Seconds of the host's own heavy traffic (worst interface).
+    pub self_traffic_s: f64,
+    pub observer_incidents: u32,
+    pub max_cpu: Option<f64>,
+}
+
+/// Observer Trust Score: `polluted` when the host distorted much of the run, `caution` for
+/// short host effects, `clean` otherwise. Every reason is a translatable message.
+pub(super) fn observer_trust(i: &TrustInputs) -> ObserverTrust {
+    let mut polluted = Vec::new();
+    let mut caution = Vec::new();
+    if !i.power_save_ifaces.is_empty() {
+        polluted.push(crate::msg!("t_power_save", "Wi-Fi power-save was on ({ifs}) during the run: RTT and jitter are inflated.", ifs = i.power_save_ifaces.join(", ")));
+    }
+    let pct = format!("{:.1}", i.overrun_pct);
+    if i.overrun_pct >= 1.0 {
+        polluted.push(crate::msg!("t_overrun", "{pct}% of probe ticks were late (host CPU or disk stalls).", pct = pct));
+    } else if i.overrun_pct >= 0.1 {
+        caution.push(crate::msg!("t_overrun", "{pct}% of probe ticks were late (host CPU or disk stalls).", pct = pct));
+    }
+    if i.throttled_samples > 0 {
+        let share = i.throttled_samples as f64 / i.host_samples.max(1) as f64;
+        let m = crate::msg!("t_throttled", "Undervoltage or thermal throttling in {n} host sample(s).", n = i.throttled_samples);
+        if share >= 0.1 { polluted.push(m) } else { caution.push(m) }
+    }
+    if i.clock_unsynced {
+        caution.push(crate::msg!("t_ntp", "The clock was not NTP-synchronized for part of the run: compare times with other devices with care."));
+    }
+    if i.self_traffic_s >= 60.0 {
+        caution.push(crate::msg!("t_self_traffic", "The host's own traffic was heavy for {min} min; stalls in that time are excluded.", min = format!("{:.0}", i.self_traffic_s / 60.0)));
+    }
+    if i.observer_incidents > 0 {
+        caution.push(crate::msg!("t_observer_incidents", "{n} incident(s) were caused by the measuring device and are excluded.", n = i.observer_incidents));
+    }
+    if let Some(c) = i.max_cpu.filter(|c| *c >= 85.0) {
+        caution.push(crate::msg!("t_cpu", "Host CPU peaked at {v}%.", v = format!("{c:.0}")));
+    }
+    let level = if !polluted.is_empty() {
+        TrustLevel::Polluted
+    } else if !caution.is_empty() {
+        TrustLevel::Caution
+    } else {
+        TrustLevel::Clean
+    };
+    polluted.extend(caution);
+    ObserverTrust { level, reasons: polluted }
 }

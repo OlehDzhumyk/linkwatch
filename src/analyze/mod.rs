@@ -41,11 +41,16 @@ pub struct Opts {
     pub stall_gw_ms: f64,
     /// A tick with internet RTT above this (ms) is a stall.
     pub stall_net_ms: f64,
+    /// Interface traffic (rx+tx, bit/s) above this, outside our speed test, is the host's own
+    /// load (updates, backups, downloads): stalls then are not counted as network faults (H4).
+    pub self_traffic_bps: f64,
+    /// Packets per second (rx+tx) above this are the host's own load too (H16).
+    pub self_traffic_pps: f64,
 }
 
 impl Default for Opts {
     fn default() -> Self {
-        Self { merge_gap_s: 5, micro_max_s: 2.5, z: 4.0, context_s: 60, tick_s: 1.0, stall_gw_ms: 200.0, stall_net_ms: 500.0 }
+        Self { merge_gap_s: 5, micro_max_s: 2.5, z: 4.0, context_s: 60, tick_s: 1.0, stall_gw_ms: 200.0, stall_net_ms: 500.0, self_traffic_bps: 10e6, self_traffic_pps: 2000.0 }
     }
 }
 
@@ -207,6 +212,12 @@ pub struct IfaceReport {
     pub offpeak_net_rtt_p95: Option<f64>,
     #[serde(default)]
     pub wifi_airtime_congestion_stalls: u32,
+    /// Seconds with the host's own traffic above `Opts::self_traffic_bps` outside speed tests.
+    #[serde(default)]
+    pub self_traffic_s: f64,
+    /// Stalls during the host's own traffic (not counted in `stalls`).
+    #[serde(default)]
+    pub self_traffic_stalls: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -280,6 +291,29 @@ pub fn texts(m: &[Msg]) -> Vec<String> {
     m.iter().map(|x| x.text.clone()).collect()
 }
 
+/// How far the measuring host itself can be trusted for this session
+/// (docs/HOST-ISOLATION-SCENARIOS.md section 3.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+#[serde(rename_all = "snake_case")]
+pub enum TrustLevel {
+    /// No host problem seen: every verdict is about the network.
+    #[default]
+    Clean,
+    /// Short host effects; the incidents they touched are excluded, the rest is valid.
+    Caution,
+    /// The host distorted the measurement for a large part of the run.
+    Polluted,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct ObserverTrust {
+    pub level: TrustLevel,
+    /// Why the level is not `clean` (most serious first).
+    pub reasons: Vec<Msg>,
+}
+
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct Report {
     pub from: Option<DateTime<Utc>>,
@@ -315,6 +349,8 @@ pub struct Report {
     pub security_events: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub observer_findings: Vec<String>,
+    #[serde(default)]
+    pub observer_trust: ObserverTrust,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub router: Option<RouterReport>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -8,6 +8,8 @@ pub const CMD_GET_INTERFACE: u8 = 5;
 pub const CMD_GET_STATION: u8 = 17;
 /// NL80211_CMD_GET_SCAN
 pub const CMD_GET_SCAN: u8 = 32;
+/// NL80211_CMD_GET_REG
+pub const CMD_GET_REG: u8 = 31;
 /// NL80211_CMD_TRIGGER_SCAN
 pub const CMD_TRIGGER_SCAN: u8 = 33;
 /// NL80211_CMD_GET_SURVEY
@@ -28,6 +30,10 @@ pub const CMD_CONN_FAILED: u8 = 91;
 // enum nl80211_attrs
 /// NL80211_ATTR_IFINDEX (u32)
 pub const ATTR_IFINDEX: u16 = 3;
+/// NL80211_ATTR_WIPHY (u32)
+pub const ATTR_WIPHY: u16 = 1;
+/// NL80211_ATTR_REG_ALPHA2 (string, ISO 3166 country or "00" world)
+pub const ATTR_REG_ALPHA2: u16 = 33;
 /// NL80211_ATTR_MAC (6 bytes)
 pub const ATTR_MAC: u16 = 6;
 /// NL80211_ATTR_STA_INFO (nested, enum nl80211_sta_info)

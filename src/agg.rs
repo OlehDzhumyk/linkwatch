@@ -141,6 +141,7 @@ mod tests {
             scan_active: false,
             t: None,
             freq_mhz: None,
+            pkt_delta: None,
         }
     }
 

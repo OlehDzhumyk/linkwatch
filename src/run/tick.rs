@@ -20,6 +20,7 @@ pub(super) async fn tick_loop(ctx: Ctx, summary: Arc<Mutex<Summary>>) -> anyhow:
         ctx.ifaces.iter().map(|(n, _)| (n.clone(), PathClassifier::new(cfg.classify.clone(), now))).collect();
     let mut accs: HashMap<String, BucketAcc> = HashMap::new();
     let mut prev_links: HashMap<String, LinkState> = HashMap::new();
+    let mut prev_pkts: HashMap<String, u64> = HashMap::new();
     let mut last_dns: HashMap<String, ProbeResult> = HashMap::new();
     // Consecutive failed DNS queries per interface: one lost UDP query is not an outage.
     let mut dns_fails: HashMap<String, u32> = HashMap::new();
@@ -73,7 +74,15 @@ pub(super) async fn tick_loop(ctx: Ctx, summary: Arc<Mutex<Summary>>) -> anyhow:
             let rx_delta = prev_links.get(name).map_or(0, |p| l.rx_bytes.saturating_sub(p.rx_bytes));
             let tx_delta = prev_links.get(name).map_or(0, |p| l.tx_bytes.saturating_sub(p.tx_bytes));
             prev_links.insert(name.clone(), l.clone());
-            futs.push(probe_iface(ctx.cfg.clone(), plan, IfaceTick { iface: name.clone(), role: *role, link: l, rx_delta, tx_delta }));
+            let pkts = link::packets(name);
+            let pkt_delta = match (pkts, prev_pkts.get(name)) {
+                (Some(now), Some(prev)) => Some(now.saturating_sub(*prev)),
+                _ => None,
+            };
+            if let Some(p) = pkts {
+                prev_pkts.insert(name.clone(), p);
+            }
+            futs.push(probe_iface(ctx.cfg.clone(), plan, IfaceTick { iface: name.clone(), role: *role, link: l, rx_delta, tx_delta, pkt_delta }));
         }
         let samples = futures::future::join_all(futs).await;
 
@@ -217,11 +226,12 @@ pub(super) struct IfaceTick {
     link: LinkState,
     rx_delta: u64,
     tx_delta: u64,
+    pkt_delta: Option<u64>,
 }
 
 pub(super) async fn probe_iface(cfg: Arc<Config>, plan: TickPlan, it: IfaceTick) -> (Sample, Option<(Ipv4Addr, Vec<Ipv4Addr>)>) {
     let TickPlan { isp, do_dns, do_tcp, tick, dns_every, timeout } = plan;
-    let IfaceTick { iface, role, link, rx_delta, tx_delta } = it;
+    let IfaceTick { iface, role, link, rx_delta, tx_delta, pkt_delta } = it;
     let t = &cfg.targets;
     let usable = link.present && link.up && link.carrier && link.ipv4.is_some();
     let mut s = Sample {
@@ -241,6 +251,7 @@ pub(super) async fn probe_iface(cfg: Arc<Config>, plan: TickPlan, it: IfaceTick)
         scan_active: false,
         t: None,
         freq_mhz: None,
+        pkt_delta,
     };
     if !usable {
         return (s, None);

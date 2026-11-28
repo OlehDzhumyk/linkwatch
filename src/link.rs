@@ -47,6 +47,15 @@ pub fn read(iface: &str) -> LinkState {
     }
 }
 
+/// Packets received + sent on `iface` since boot.
+pub fn packets(iface: &str) -> Option<u64> {
+    if !valid_name(iface) {
+        return None;
+    }
+    let st = Path::new(SYS_NET).join(iface).join("statistics");
+    Some(read_u64(&st.join("rx_packets")).saturating_add(read_u64(&st.join("tx_packets"))))
+}
+
 /// Wi-Fi if sysfs has `wireless` or `phy80211`, Ethernet if it is a physical
 /// ARPHRD_ETHER device, otherwise Other.
 pub fn detect_role(iface: &str) -> IfaceRole {

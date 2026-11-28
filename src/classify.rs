@@ -264,6 +264,7 @@ mod tests {
             overrun: false,
             t: None,
             freq_mhz: None,
+            pkt_delta: None,
         }
     }
 

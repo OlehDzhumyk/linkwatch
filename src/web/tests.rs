@@ -433,6 +433,7 @@ async fn old_session_minutes_still_readable() {
             scan_active: false,
             t: Some(old_t),
             freq_mhz: Some(5180),
+            pkt_delta: None,
         }),
     };
     let day_name = format!("samples-{}.jsonl", old_t.format("%Y%m%d"));

@@ -143,6 +143,13 @@ pub fn warn_isp_line_healthy_wifi_only(lang: SupportLang) -> &'static str {
     }
 }
 
+pub fn warn_observer_polluted(lang: SupportLang) -> &'static str {
+    match lang {
+        SupportLang::En => "The measuring device itself was unreliable for a large part of the run (late probe ticks or throttling): fix the host and measure again before filing a ticket.",
+        SupportLang::Uk => "Сам вимірювальний пристрій був ненадійним значну частину часу (запізнілі такти проб або троттлінг): виправте хост і виміряйте знову, перш ніж подавати заявку.",
+    }
+}
+
 pub fn warn_load_provoked_only(lang: SupportLang) -> &'static str {
     match lang {
         SupportLang::En => "All drops happened strictly during own heavy load/speedtest (bufferbloat): do NOT file an unprovoked ISP outage ticket.",

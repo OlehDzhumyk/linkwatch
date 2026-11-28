@@ -106,6 +106,23 @@ impl Nl80211 {
         parse_power_save(genl_payload(p))
     }
 
+    /// Regulatory country of the radio behind `iface` (`"00"` is the restrictive world domain).
+    /// Self-managed drivers (iwlwifi LAR) have their own domain, so the wiphy is asked first.
+    pub fn reg_alpha2(&mut self, iface: &str) -> Result<Option<String>> {
+        let wiphy = self
+            .request(CMD_GET_INTERFACE, iface, false)
+            .context("GET_INTERFACE")?
+            .first()
+            .and_then(|p| parse_attrs(genl_payload(p)).ok().and_then(|a| find(&a, ATTR_WIPHY).and_then(|x| x.u32())));
+        let seq = self.sock.next_seq();
+        let mut b = MsgBuilder::new(self.family, NLM_F_REQUEST | NLM_F_ACK, seq, CMD_GET_REG, 0);
+        if let Some(w) = wiphy {
+            b = b.attr_u32(ATTR_WIPHY, w);
+        }
+        let msgs = self.sock.request(&b.finish(), seq).context("GET_REG")?;
+        Ok(msgs.first().and_then(|p| parse_reg_alpha2(genl_payload(p))))
+    }
+
     /// Channel survey of all frequencies the driver reports.
     ///
     /// Some drivers (seen with mt7921) never set the in-use flag. Then the
@@ -273,6 +290,12 @@ fn ifindex(iface: &str) -> Result<u32> {
         Ok(i) if i > 0 => Ok(i),
         _ => bail!("interface {iface} not found"),
     }
+}
+
+fn parse_reg_alpha2(attrs: &[u8]) -> Option<String> {
+    let a = parse_attrs(attrs).ok()?;
+    let s = find(&a, ATTR_REG_ALPHA2)?.string();
+    (!s.is_empty()).then_some(s)
 }
 
 /// Attribute area of a generic-netlink message payload.
@@ -984,6 +1007,13 @@ mod tests {
             println!("  {b:?}");
         }
         assert!(nl.station("nosuchif0").is_err());
+    }
+
+    #[test]
+    fn reg_alpha2_parse() {
+        assert_eq!(parse_reg_alpha2(&nla(ATTR_REG_ALPHA2, b"UA\0")), Some("UA".to_string()));
+        assert_eq!(parse_reg_alpha2(&nla(ATTR_REG_ALPHA2, b"00\0")), Some("00".to_string()));
+        assert_eq!(parse_reg_alpha2(&[]), None);
     }
 
     #[test]

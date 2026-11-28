@@ -58,8 +58,21 @@ pub fn to_markdown(r: &Report) -> String {
             cell(&e.context.join("; "))
         );
     }
-    if !r.observer_findings.is_empty() {
+    let trust = &r.observer_trust;
+    if !r.observer_findings.is_empty() || trust.level != TrustLevel::Clean {
         let _ = writeln!(s, "\n## Observer health\n");
+        let level = match trust.level {
+            TrustLevel::Clean => "clean",
+            TrustLevel::Caution => "caution",
+            TrustLevel::Polluted => "polluted",
+        };
+        let _ = writeln!(s, "Observer trust: **{level}**\n");
+        for x in &trust.reasons {
+            let _ = writeln!(s, "- {}", x.text);
+        }
+        if !trust.reasons.is_empty() && !r.observer_findings.is_empty() {
+            let _ = writeln!(s);
+        }
         for x in &r.observer_findings {
             let _ = writeln!(s, "- {x}");
         }

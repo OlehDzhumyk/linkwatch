@@ -109,15 +109,15 @@ pub async fn check(cfg: &Config) -> Vec<Item> {
             format!("arp_ignore={ai} arp_announce={aa}"),
             (!ok).then_some("install deploy/90-linkwatch.conf to /etc/sysctl.d and run `sysctl --system` (done by install.sh)"),
         ));
-        let rp = read_trim("/proc/sys/net/ipv4/conf/all/rp_filter").unwrap_or_default();
-        out.push(item(if rp == "1" { Level::Fail } else { Level::Ok }, "rp_filter", rp, Some("strict mode (1) drops replies on the second interface; use 2")));
     }
 
     // Wi-Fi via nl80211.
+    let mut wifi_on_24ghz = false;
     for (name, role) in ifaces.iter().filter(|(_, r)| *r == IfaceRole::Wifi) {
         let _ = role;
         match wifi::Nl80211::open().and_then(|mut nl| nl.station(name).map(|s| (s, nl))) {
             Ok((st, mut nl)) => {
+                wifi_on_24ghz |= st.freq_mhz.is_some_and(|f| f < 3000);
                 out.push(item(
                     Level::Ok,
                     format!("wifi {name}"),
@@ -132,6 +132,16 @@ pub async fn check(cfg: &Config) -> Vec<Item> {
                         Some(&format!("sudo iw dev {name} set power_save off (or set NetworkManager wifi.powersave = 2)")),
                     ));
                 }
+                // H18: the world domain "00" limits TX power and forbids active use of some 5 GHz channels.
+                if let Ok(Some(cc)) = nl.reg_alpha2(name) {
+                    let world = cc == "00";
+                    out.push(item(
+                        if world { Level::Warn } else { Level::Ok },
+                        format!("wifi country {name}"),
+                        if world { "00 (world domain: lower TX power, some 5 GHz channels passive)".to_string() } else { cc },
+                        world.then_some("set your country code: `sudo iw reg set <CC>` (e.g. GB; persist with cfg80211 ieee80211_regdom=<CC> or the wpa_supplicant country= setting)"),
+                    ));
+                }
                 let scan = nl.trigger_scan(name);
                 out.push(item(
                     if scan.is_ok() { Level::Ok } else { Level::Warn },
@@ -143,6 +153,13 @@ pub async fn check(cfg: &Config) -> Vec<Item> {
             Err(e) => out.push(item(Level::Warn, format!("wifi {name}"), format!("{e:#}"), Some("Wi-Fi statistics will be missing"))),
         }
     }
+
+    // Host settings and background programs that can imitate network faults.
+    out.extend(crate::hostcheck::checks(
+        std::path::Path::new("/"),
+        &ifaces,
+        &crate::hostcheck::Ctx { wifi_on_24ghz, shared_subnet: same, dns_servers_configured: !cfg.targets.dns_servers.is_empty() },
+    ));
 
     // Storage.
     let dd = &cfg.data_dir;

@@ -304,6 +304,10 @@ pub struct Sample {
     /// Operating Wi-Fi frequency (MHz) during this tick, when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub freq_mhz: Option<u32>,
+    /// Packets (rx + tx) since the previous sample: many small packets load Wi-Fi airtime even
+    /// at a low byte rate (torrent/DHT, sync clients).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pkt_delta: Option<u64>,
 }
 
 fn is_false(b: &bool) -> bool {

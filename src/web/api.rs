@@ -1312,6 +1312,8 @@ pub(crate) struct ReportResponse {
     pub findings: Vec<Msg>,
     pub patterns: Vec<Msg>,
     pub observer_findings: Vec<Msg>,
+    /// Observer Trust Score of the session (`clean | caution | polluted` + reasons).
+    pub observer_trust: crate::analyze::ObserverTrust,
     pub router: Option<ReportRouter>,
     pub lan: Option<ReportLan>,
 }
@@ -1545,6 +1547,7 @@ fn analyze_session_dir(dir: &Path, id: String, live_verdict: Option<Verdict>) ->
         findings: rep.findings_msg,
         patterns: rep.patterns_msg,
         observer_findings: rep.observer_findings_msg,
+        observer_trust: rep.observer_trust,
         router: rep.router.map(|r| ReportRouter {
             samples: r.samples,
             model: r.model,
@@ -1600,6 +1603,7 @@ async fn report(State(st): State<AppState>, Query(q): Query<ReportQuery>) -> Api
             findings: Vec::new(),
             patterns: Vec::new(),
             observer_findings: Vec::new(),
+            observer_trust: Default::default(),
             router: None,
             lan: None,
         }));
