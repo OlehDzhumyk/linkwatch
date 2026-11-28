@@ -208,7 +208,7 @@ fn with_live_verdict(rep: &ReportResponse, live: Option<Verdict>) -> Response {
         return json_body(rep);
     }
     let wifi_signal = rep.ifaces.iter().find(|i| i.role == Some(IfaceRole::Wifi)).and_then(|i| i.signal_med);
-    let h = verdict::explain(live, rep.network_incidents, rep.observer_incidents, wifi_signal);
+    let h = verdict::explain(live, rep.network_incidents, rep.observer_incidents, rep.load_incidents, wifi_signal);
     let Ok(mut v) = serde_json::to_value(rep) else { return json_body(rep) };
     if let Some(o) = v.as_object_mut() {
         o.insert("verdict".into(), serde_json::to_value(live).unwrap_or_default());

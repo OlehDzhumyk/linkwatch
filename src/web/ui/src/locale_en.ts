@@ -277,6 +277,7 @@ export const EN = {
 
   "vc.all_ok_observer": "The network stayed healthy ({n} incidents of the observer device excluded).",
   "vc.all_ok_earlier": "The paths are healthy now; {n} earlier incidents were recorded in this session.",
+  "vc.all_ok_load": "The network stayed healthy ({n} drops during our own speed test excluded).",
   "vc.all_ok_clean": "All monitored paths are healthy, with no drops recorded.",
   "vc.wifi_weak": "The cable stayed stable while Wi-Fi failed: weak signal (median {dbm} dBm).",
   "vc.wifi": "The cable stayed stable while Wi-Fi failed: the fault is on the wireless hop.",

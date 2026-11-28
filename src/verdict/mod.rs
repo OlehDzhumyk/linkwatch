@@ -56,15 +56,15 @@ pub fn headline(report: &Report, live: Option<Verdict>) -> Headline {
         .iter()
         .find(|i| i.role == Some(IfaceRole::Wifi))
         .and_then(|i| i.signal_med);
-    explain(verdict, report.network_incidents, report.observer_incidents, wifi_signal)
+    explain(verdict, report.network_incidents, report.observer_incidents, report.load_incidents, wifi_signal)
 }
 
 /// The sentence for one verdict, without choosing the verdict.
 ///
 /// Use it to put the live verdict on a report that was built earlier: the caller keeps the
 /// incident counts and the Wi-Fi signal of that report. `wifi_signal_med` is the median signal
-/// (dBm) of the first Wi-Fi interface.
-pub fn explain(verdict: Option<Verdict>, net_inc: u32, obs_inc: u32, wifi_signal_med: Option<f64>) -> Headline {
+/// (dBm) of the first Wi-Fi interface. `load_inc` counts drops under our own speed test.
+pub fn explain(verdict: Option<Verdict>, net_inc: u32, obs_inc: u32, load_inc: u32, wifi_signal_med: Option<f64>) -> Headline {
     let one = |code, text: &str| Headline { verdict, code, args: BTreeMap::new(), text: text.into() };
     let with = |code, k: &str, v: String, text: String| Headline { verdict, code, args: BTreeMap::from([(k.to_string(), v)]), text };
     match verdict {
@@ -73,6 +73,8 @@ pub fn explain(verdict: Option<Verdict>, net_inc: u32, obs_inc: u32, wifi_signal
                 with("all_ok_observer", "n", obs_inc.to_string(), format!("Network stayed healthy ({obs_inc} observer-host incident(s) excluded)."))
             } else if net_inc > 0 {
                 with("all_ok_earlier", "n", net_inc.to_string(), format!("Paths are healthy right now; {net_inc} earlier incident(s) recorded in this session."))
+            } else if load_inc > 0 {
+                with("all_ok_load", "n", load_inc.to_string(), format!("Network stayed healthy ({load_inc} drop(s) during our own speed test excluded)."))
             } else {
                 one("all_ok_clean", "All monitored paths are healthy with no drops recorded.")
             }

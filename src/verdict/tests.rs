@@ -66,6 +66,15 @@ fn all_ok_earlier() {
 }
 
 #[test]
+fn all_ok_load() {
+    // Drops only during our own speed test: the network is fine, but "no drops" would be false.
+    let mut r = report(vec![iface(IfaceRole::Ethernet, None), iface(IfaceRole::Wifi, None)], vec![], 0, 0);
+    r.load_incidents = 2;
+    let h = headline(&r, None);
+    check(&h, "all_ok_load", &[("n", "2")], "Network stayed healthy (2 drop(s) during our own speed test excluded).");
+}
+
+#[test]
 fn all_ok_clean() {
     let r = report(vec![iface(IfaceRole::Ethernet, None), iface(IfaceRole::Wifi, None)], vec![], 0, 0);
     let h = headline(&r, None);
@@ -155,8 +164,8 @@ fn live_verdict_wins_over_the_dominant_cause() {
 #[test]
 fn explain_puts_a_live_verdict_on_a_cached_report() {
     // The caller keeps the counts and the signal of the cached report; there is no fallback.
-    check(&explain(Some(Verdict::RouterProblem), 5, 0, None), "router", &[], "All monitored paths failed at the router — router rebooted, stalled, or LAN stopped responding.");
-    let h = explain(None, 5, 0, Some(-90.0));
+    check(&explain(Some(Verdict::RouterProblem), 5, 0, 0, None), "router", &[], "All monitored paths failed at the router — router rebooted, stalled, or LAN stopped responding.");
+    let h = explain(None, 5, 0, 0, Some(-90.0));
     assert_eq!(h.verdict, None);
     assert_eq!(h.code, "waiting");
 }
