@@ -1,6 +1,6 @@
 //! Optional webhook / ntfy alert notifications (pure Rust HTTP/HTTPS, non-blocking, rate-limited).
 
-use crate::config::Alerts;
+use crate::config::{Alerts, WebhookTarget, parse_webhook_url};
 use chrono::{DateTime, TimeDelta, Utc};
 use rustls::pki_types::ServerName;
 use std::collections::HashMap;
@@ -39,59 +39,6 @@ impl Notifier {
 pub fn channel() -> (Notifier, mpsc::Receiver<AlertMsg>) {
     let (tx, rx) = mpsc::channel(CHANNEL_CAP);
     (Notifier { tx }, rx)
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WebhookTarget {
-    pub https: bool,
-    pub host: String,
-    pub port: u16,
-    pub path: String,
-}
-
-/// Validates and parses an `http://` or `https://` webhook URL.
-pub fn parse_webhook_url(raw: &str) -> anyhow::Result<WebhookTarget> {
-    let trimmed = raw.trim();
-    let (https, rest) = if let Some(r) = trimmed.strip_prefix("https://") {
-        (true, r)
-    } else if let Some(r) = trimmed.strip_prefix("http://") {
-        (false, r)
-    } else {
-        anyhow::bail!("webhook_url must start with http:// or https://");
-    };
-    anyhow::ensure!(
-        !rest.bytes().any(|b| b.is_ascii_control() || b == b' '),
-        "webhook_url contains invalid whitespace or control characters"
-    );
-    let (auth, path) = match rest.find('/') {
-        Some(i) => (&rest[..i], &rest[i..]),
-        None => (rest, "/"),
-    };
-    anyhow::ensure!(!auth.is_empty() && !auth.contains('@'), "invalid host in webhook_url");
-    let default_port = if https { 443 } else { 80 };
-    let (host, port) = if let Some(v6) = auth.strip_prefix('[') {
-        let (h, p_part) = v6.split_once(']').ok_or_else(|| anyhow::anyhow!("invalid IPv6 host"))?;
-        anyhow::ensure!(!h.is_empty(), "empty host in webhook_url");
-        if p_part.is_empty() {
-            (h.to_string(), default_port)
-        } else {
-            let p_str = p_part.strip_prefix(':').ok_or_else(|| anyhow::anyhow!("invalid port in webhook_url"))?;
-            let port: u16 = p_str.parse().map_err(|_| anyhow::anyhow!("invalid port in webhook_url"))?;
-            (h.to_string(), port)
-        }
-    } else if let Some((h, p_str)) = auth.rsplit_once(':') {
-        anyhow::ensure!(!h.is_empty() && !h.contains(':'), "invalid host:port in webhook_url");
-        let port: u16 = p_str.parse().map_err(|_| anyhow::anyhow!("invalid port in webhook_url"))?;
-        (h.to_string(), port)
-    } else {
-        (auth.to_string(), default_port)
-    };
-    Ok(WebhookTarget {
-        https,
-        host,
-        port,
-        path: path.to_string(),
-    })
 }
 
 #[derive(Debug, Default)]
@@ -165,7 +112,7 @@ pub async fn post_alert(cfg: &Alerts, msg: &AlertMsg) -> anyhow::Result<u16> {
         let mut head_buf = Vec::with_capacity(2048);
         let mut chunk = [0u8; 1024];
         if target.https {
-            let connector = crate::cve::tls_connector()?;
+            let connector = crate::tls::connector()?;
             let sni = ServerName::try_from(target.host.clone())
                 .map_err(|_| anyhow::anyhow!("invalid TLS host: {}", target.host))?;
             let mut tls = connector.connect(sni, tcp).await?;

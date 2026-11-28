@@ -486,12 +486,66 @@ impl Config {
             let url = self.alerts.webhook_url.as_deref().ok_or_else(|| {
                 anyhow::anyhow!("alerts.webhook_url must be set when alerts.enabled = true")
             })?;
-            crate::notify::parse_webhook_url(url)?;
+            parse_webhook_url(url)?;
         } else if let Some(url) = &self.alerts.webhook_url {
-            crate::notify::parse_webhook_url(url)?;
+            parse_webhook_url(url)?;
         }
         Ok(())
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebhookTarget {
+    pub https: bool,
+    pub host: String,
+    pub port: u16,
+    pub path: String,
+}
+
+/// Validates and parses an `http://` or `https://` webhook URL. It lives here, not in `notify`, so
+/// that a config is valid in every build, also in one without the `alerts` feature.
+pub fn parse_webhook_url(raw: &str) -> anyhow::Result<WebhookTarget> {
+    let trimmed = raw.trim();
+    let (https, rest) = if let Some(r) = trimmed.strip_prefix("https://") {
+        (true, r)
+    } else if let Some(r) = trimmed.strip_prefix("http://") {
+        (false, r)
+    } else {
+        anyhow::bail!("webhook_url must start with http:// or https://");
+    };
+    anyhow::ensure!(
+        !rest.bytes().any(|b| b.is_ascii_control() || b == b' '),
+        "webhook_url contains invalid whitespace or control characters"
+    );
+    let (auth, path) = match rest.find('/') {
+        Some(i) => (&rest[..i], &rest[i..]),
+        None => (rest, "/"),
+    };
+    anyhow::ensure!(!auth.is_empty() && !auth.contains('@'), "invalid host in webhook_url");
+    let default_port = if https { 443 } else { 80 };
+    let (host, port) = if let Some(v6) = auth.strip_prefix('[') {
+        let (h, p_part) = v6.split_once(']').ok_or_else(|| anyhow::anyhow!("invalid IPv6 host"))?;
+        anyhow::ensure!(!h.is_empty(), "empty host in webhook_url");
+        if p_part.is_empty() {
+            (h.to_string(), default_port)
+        } else {
+            let p_str = p_part.strip_prefix(':').ok_or_else(|| anyhow::anyhow!("invalid port in webhook_url"))?;
+            let port: u16 = p_str.parse().map_err(|_| anyhow::anyhow!("invalid port in webhook_url"))?;
+            (h.to_string(), port)
+        }
+    } else if let Some((h, p_str)) = auth.rsplit_once(':') {
+        anyhow::ensure!(!h.is_empty() && !h.contains(':'), "invalid host:port in webhook_url");
+        let port: u16 = p_str.parse().map_err(|_| anyhow::anyhow!("invalid port in webhook_url"))?;
+        (h.to_string(), port)
+    } else {
+        (auth.to_string(), default_port)
+    };
+    Ok(WebhookTarget {
+        https,
+        host,
+        port,
+        path: path.to_string(),
+    })
 }
 
 pub fn parse_hhmm(s: &str) -> anyhow::Result<(u32, u32)> {

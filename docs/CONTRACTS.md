@@ -13,9 +13,11 @@ Rules for every module:
 - Every timeout is explicit. Nothing may hang forever.
 - Pure-Rust dependency stack: tokio(full), serde, serde_json, toml, anyhow, thiserror,
   tracing, tracing-subscriber, socket2(all), libc, netlink-sys, nix, clap, futures, chrono,
-  axum 0.7, flate2, fd-lock, sd-notify, uuid, tokio-stream, md-5, rustls, rustls-rustcrypto,
-  snmp2 (crypto-rust), tokio-rustls, webpki-roots (+ tempfile, ts-rs in dev). Zero C toolchain
-  needed for cross-compiled musl builds.
+  axum 0.7, flate2, fd-lock, sd-notify, uuid, tokio-stream (+ tempfile, ts-rs in dev). Optional,
+  by cargo feature: `router-audit` = md-5, snmp2 (crypto-rust); `cve` and `alerts` = rustls,
+  rustls-rustcrypto, tokio-rustls, webpki-roots (through the internal feature `tls`). All three
+  features are in `default`. `--no-default-features` builds the core without them. Zero C
+  toolchain needed for cross-compiled musl builds.
 - Unit tests for parsers and state logic. Mark tests that need real network/root with `#[ignore]`.
 
 ## Agent A: measurement (`src/probe/`, `src/link.rs`, `src/wifi/`, `src/speed.rs`)
@@ -131,7 +133,7 @@ pub async fn serve_with_router(..., opts: WebRouterOpts, shutdown: ...) -> anyho
 ## Extensions: router telemetry, LAN sweep, router audit, CVE lookup, advisor & alerts
 
 ```rust
-// src/router.rs — read-only UPnP IGDv1/IGDv2 SOAP poller (SSDP gateway-only or explicit URL).
+// src/router/mod.rs — read-only UPnP IGDv1/IGDv2 SOAP poller (SSDP gateway-only or explicit URL).
 pub struct Poller { /* ... */ }
 pub fn parse_http_url(url: &str) -> anyhow::Result<HttpUrl>;
 pub fn ssdp_location(resp: &str, gateway: Ipv4Addr) -> Option<String>;
@@ -142,20 +144,23 @@ pub fn counter_delta(prev: u64, cur: u64, dt_s: f64, max_rate: f64) -> CounterDe
 pub async fn count(...) -> LanCount;
 pub struct DeviceCounter { /* salted HashSet<u64>, MAX_SEEN = 4096 */ }
 
-// src/router_audit.rs — modular read-only adapters (upnp, snmp + IF-MIB, tr064, openwrt, mikrotik, http) + port check.
+// src/router/audit.rs (feature `router-audit`) — modular read-only adapters (upnp, snmp + IF-MIB, tr064, openwrt, mikrotik, http) + port check.
+// The result types (RouterAudit, PortCheck, CveLookupResponse, CveItem) are in src/router/types.rs and exist in every build.
 pub fn validate_local_host(raw: &str) -> anyhow::Result<Ipv4Addr>; // private/loopback/link-local only
 pub async fn probe_gateway_ports(gw: Ipv4Addr) -> Vec<PortCheck>;
 pub async fn run_probe(gw: Ipv4Addr, gw_mac: Option<String>, req: &RouterProbeRequest, upnp_url: Option<&str>) -> RouterAudit;
 
-// src/cve.rs — on-demand pure-Rust TLS lookup (CIRCL -> NIST NVD 2.0 + CISA KEV + offline bundle), CPE normalization, 24 h cache.
+// src/router/cve.rs (feature `cve`) — on-demand pure-Rust TLS lookup (CIRCL -> NIST NVD 2.0 + CISA KEV + offline bundle), CPE normalization, 24 h cache.
 pub fn normalize_device_query(vendor: Option<&str>, model: &str) -> (Option<String>, String);
 pub fn version_lt(a: &str, b: &str) -> Option<bool>;
 pub async fn lookup_cves(data_dir: &Path, req: &CveLookupRequest, nvd_api_key: Option<&str>) -> anyhow::Result<CveLookupResponse>;
 
-// src/advice.rs — rule-based Wi-Fi, security, router & observer health recommendations.
+// src/router/advice.rs — rule-based Wi-Fi, security, router & observer health recommendations.
 pub fn evaluate(snap: &LiveSnapshot, audit: Option<&RouterAudit>) -> AdviceResponse;
 
-// src/notify.rs — optional non-blocking HTTP/HTTPS webhook / ntfy alert dispatcher with cooldown.
-pub fn parse_webhook_url(raw: &str) -> anyhow::Result<WebhookTarget>;
+// src/notify.rs (feature `alerts`; without it src/notify_off.rs has the same API and drops alerts) —
+// optional non-blocking HTTP/HTTPS webhook / ntfy alert dispatcher with cooldown.
+// src/tls.rs (feature `tls`, on with `cve` or `alerts`) — the shared TLS client.
+// config::parse_webhook_url validates the URL in every build, so [alerts] never fails to load.
 pub async fn run_loop(cfg: Alerts, rx: mpsc::Receiver<AlertMsg>, shutdown: watch::Receiver<bool>);
 ```

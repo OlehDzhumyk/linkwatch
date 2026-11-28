@@ -1,6 +1,7 @@
 //! Explicit on-demand CVE & CISA KEV vulnerability lookup over TLS (pure Rust `rustls-rustcrypto`),
 //! with 24-hour disk caching. Nothing runs passively; external requests occur only on explicit user action.
 
+use super::types::{CveItem, CveLookupResponse};
 use chrono::{DateTime, TimeDelta, Utc};
 use flate2::read::GzDecoder;
 use rustls::pki_types::ServerName;
@@ -8,11 +9,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::path::Path;
-use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use tokio_rustls::TlsConnector;
 
 const CACHE_TTL_HOURS: i64 = 24;
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
@@ -28,31 +27,6 @@ pub struct CveLookupRequest {
     pub model: String,
     #[serde(default)]
     pub firmware: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
-pub struct CveItem {
-    pub id: String,
-    pub severity: String,
-    pub cvss: Option<f64>,
-    pub kev: bool,
-    pub summary: String,
-    pub published: Option<String>,
-    pub url: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
-pub struct CveLookupResponse {
-    pub queried_at: DateTime<Utc>,
-    pub cached: bool,
-    pub source: String,
-    pub query: String,
-    pub total: usize,
-    pub kev_count: usize,
-    pub items: Vec<CveItem>,
-    pub note: Option<String>,
 }
 
 pub fn sanitize_token(raw: &str) -> String {
@@ -307,18 +281,6 @@ fn parse_https_url(url: &str) -> anyhow::Result<(&str, &str)> {
     Ok((host, path))
 }
 
-pub(crate) fn tls_connector() -> anyhow::Result<TlsConnector> {
-    let provider = Arc::new(rustls_rustcrypto::provider());
-    let mut roots = rustls::RootCertStore::empty();
-    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    let cfg = rustls::ClientConfig::builder_with_provider(provider)
-        .with_safe_default_protocol_versions()
-        .map_err(|e| anyhow::anyhow!("TLS config error: {e}"))?
-        .with_root_certificates(roots)
-        .with_no_client_auth();
-    Ok(TlsConnector::from(Arc::new(cfg)))
-}
-
 pub fn decode_http_body(raw: &[u8], max_bytes: usize) -> anyhow::Result<(u16, Vec<u8>)> {
     let sep = raw
         .windows(4)
@@ -347,7 +309,7 @@ pub fn decode_http_body(raw: &[u8], max_bytes: usize) -> anyhow::Result<(u16, Ve
     }
     let body = &raw[sep + 4..];
     let dechunked = if chunked {
-        crate::router::decode_chunked(body).ok_or_else(|| anyhow::anyhow!("invalid chunked HTTPS body"))?
+        super::decode_chunked(body).ok_or_else(|| anyhow::anyhow!("invalid chunked HTTPS body"))?
     } else {
         body.to_vec()
     };
@@ -370,7 +332,7 @@ async fn https_get(
     max_bytes: usize,
 ) -> anyhow::Result<(u16, Vec<u8>)> {
     let (host, path) = parse_https_url(url)?;
-    let connector = tls_connector()?;
+    let connector = crate::tls::connector()?;
     let sni = ServerName::try_from(host.to_string())
         .map_err(|_| anyhow::anyhow!("invalid TLS server name: {host}"))?;
     tokio::time::timeout(timeout, async {

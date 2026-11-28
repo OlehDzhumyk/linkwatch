@@ -551,9 +551,9 @@ fn ts_bindings_match_api_types() {
     api::ControlResponse::export_all(&cfg).unwrap();
     api::ControlSessionResponse::export_all(&cfg).unwrap();
     api::ReportResponse::export_all(&cfg).unwrap();
-    crate::router_audit::RouterAudit::export_all(&cfg).unwrap();
-    crate::cve::CveLookupResponse::export_all(&cfg).unwrap();
-    crate::advice::AdviceResponse::export_all(&cfg).unwrap();
+    crate::router::RouterAudit::export_all(&cfg).unwrap();
+    crate::router::CveLookupResponse::export_all(&cfg).unwrap();
+    crate::router::advice::AdviceResponse::export_all(&cfg).unwrap();
     crate::compare::CompareReport::export_all(&cfg).unwrap();
     crate::support_report::SupportPack::export_all(&cfg).unwrap();
     // The live feed (SSE) sends envelopes; `Record` is inlined there (flattened) but exported too.
@@ -861,15 +861,33 @@ async fn plan_without_site_lists_measured_points() {
     let _ = stop.send(());
 }
 
+/// One test for the router extras, so that the test count is the same in every build. The
+/// checks of an extension run only when the extension is built.
 #[tokio::test]
 async fn router_audit_advice_and_cve_rules() {
-    let d = tempfile::tempdir().unwrap();
-    let live = Live::new();
-    let (addr, stop) = start(live, d.path().to_path_buf(), None).await;
+    advice_rules().await;
+    #[cfg(feature = "router-audit")]
+    router_audit_rules().await;
+    #[cfg(feature = "cve")]
+    cve_rules().await;
+    #[cfg(not(all(feature = "router-audit", feature = "cve")))]
+    missing_feature_rules().await;
+}
 
+async fn advice_rules() {
+    let d = tempfile::tempdir().unwrap();
+    let (addr, stop) = start(Live::new(), d.path().to_path_buf(), None).await;
     let (c, body) = get(addr, "/api/advice").await;
     assert_eq!(c, 200, "{body}");
     assert!(json(&body)["items"].is_array(), "{body}");
+    let _ = stop.send(());
+}
+
+#[cfg(feature = "router-audit")]
+async fn router_audit_rules() {
+    let d = tempfile::tempdir().unwrap();
+    let live = Live::new();
+    let (addr, stop) = start(live, d.path().to_path_buf(), None).await;
 
     let (c, body) = get(addr, "/api/router/audit").await;
     assert_eq!(c, 200, "{body}");
@@ -877,16 +895,13 @@ async fn router_audit_advice_and_cve_rules() {
     assert_eq!(audit["adapter_used"], "none");
     assert!(audit["gateway_ip"].is_null());
 
-    // Without [web] token configured, active probe & external CVE lookup are refused (403).
+    // Without [web] token configured, the active probe is refused (403).
     let (c, body) = post(addr, "/api/router/probe", &[JSON], r#"{"adapter":"auto"}"#).await;
-    assert_eq!(c, 403, "{body}");
-    let (c, body) = post(addr, "/api/router/cve", &[JSON], r#"{"model":"Archer C7"}"#).await;
     assert_eq!(c, 403, "{body}");
     let _ = stop.send(());
 
     let (addr_tok, _d2, _count) = start_control(None, Some(TOK)).await;
     assert_eq!(post(addr_tok, "/api/router/probe", &[JSON], r#"{"adapter":"auto"}"#).await.0, 401);
-    assert_eq!(post(addr_tok, "/api/router/cve", &[JSON], r#"{"model":"Archer C7"}"#).await.0, 401);
 
     // Cross-origin refused (403).
     assert_eq!(
@@ -898,10 +913,44 @@ async fn router_audit_advice_and_cve_rules() {
     let (c, body) = post(addr_tok, "/api/router/probe", &[AUTH, JSON], r#"{"host":"8.8.8.8"}"#).await;
     assert_eq!(c, 400, "{body}");
     assert!(json(&body)["error"].as_str().unwrap().contains("non-local"), "{body}");
+}
+
+#[cfg(feature = "cve")]
+async fn cve_rules() {
+    let d = tempfile::tempdir().unwrap();
+    let (addr, stop) = start(Live::new(), d.path().to_path_buf(), None).await;
+    // Without [web] token configured, the external CVE lookup is refused (403).
+    let (c, body) = post(addr, "/api/router/cve", &[JSON], r#"{"model":"Archer C7"}"#).await;
+    assert_eq!(c, 403, "{body}");
+    let _ = stop.send(());
+
+    let (addr_tok, _d2, _count) = start_control(None, Some(TOK)).await;
+    assert_eq!(post(addr_tok, "/api/router/cve", &[JSON], r#"{"model":"Archer C7"}"#).await.0, 401);
 
     // Empty model rejected (400).
     let (c, body) = post(addr_tok, "/api/router/cve", &[AUTH, JSON], r#"{"model":"   "}"#).await;
     assert_eq!(c, 400, "{body}");
+}
+
+/// A build without an extension keeps its routes and answers with a clear error.
+#[cfg(not(all(feature = "router-audit", feature = "cve")))]
+async fn missing_feature_rules() {
+    let d = tempfile::tempdir().unwrap();
+    let (addr, stop) = start(Live::new(), d.path().to_path_buf(), None).await;
+    #[cfg(not(feature = "router-audit"))]
+    {
+        let (c, body) = get(addr, "/api/router/audit").await;
+        assert_eq!(c, 404, "{body}");
+        assert!(json(&body)["error"].as_str().unwrap().contains("`router-audit` feature"), "{body}");
+        assert_eq!(post(addr, "/api/router/probe", &[JSON], r#"{"adapter":"auto"}"#).await.0, 404);
+    }
+    #[cfg(not(feature = "cve"))]
+    {
+        let (c, body) = post(addr, "/api/router/cve", &[JSON], r#"{"model":"Archer C7"}"#).await;
+        assert_eq!(c, 404, "{body}");
+        assert!(json(&body)["error"].as_str().unwrap().contains("`cve` feature"), "{body}");
+    }
+    let _ = stop.send(());
 }
 
 #[tokio::test]

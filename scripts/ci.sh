@@ -39,6 +39,8 @@ step "clippy"
 cargo clippy --locked --all-targets -- -D warnings
 step "tests"
 cargo test --locked --release
+step "build without extension features"
+cargo build --locked --no-default-features
 step "API bindings are current"
 changed src/web/ui/src/api
 step "UI: install, type check, build"

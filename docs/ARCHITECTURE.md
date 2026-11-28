@@ -50,6 +50,7 @@ Four layers. A layer may use only the layers below it.
   adapters  |  probe/  link  wifi/  host  lan  store/          |  sockets, netlink, disk
             +-------------------------------------------------+
   extensions (cargo features): router/ (audit, adapters, snmp), cve, security, site, notify, speed
+               (done in R6: `router-audit`, `cve`, `alerts`; the others are still to do)
 ```
 
 ### 3.1 Core (pure)
@@ -130,8 +131,14 @@ ROADMAP "Before 1.0" freezes the RF wall model, CVE/KEV, SNMP/MikroTik and rogue
 architecture makes the freeze real:
 
 - Move `router.rs`, `router_audit.rs`, `advice.rs` into `router/`. Move `cve.rs` under it.
+  **Done in R6:** `router/{mod,audit,advice,cve,types}.rs`. `types.rs` holds the result types
+  (`RouterAudit`, `PortCheck`, `CveLookupResponse`, `CveItem`). They exist in every build, so
+  the support report and the advisor never depend on a feature.
 - Put each extension behind a cargo feature: `router-audit` (with `snmp2`), `cve` and `alerts`
-  (both with the TLS stack), `site`, `security`, `speedtest`.
+  (both with the TLS stack), `site`, `security`, `speedtest`. **Done in R6:** `router-audit`,
+  `cve`, `alerts`. The TLS crates are optional and turn on with `cve` or `alerts` (internal
+  feature `tls`, `src/tls.rs`). `site`, `security`, `speedtest` are still to do.
+  Without `alerts`, `src/notify_off.rs` gives `run` the same API and drops the alerts.
 - In 0.x all features stay on by default, so no user loses a function. Before 1.0, decide
   which features the release files have. The core build must not need `rustls-rustcrypto`.
 - Rule: the core never imports an extension. An extension may read core types.

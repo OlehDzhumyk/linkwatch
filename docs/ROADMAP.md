@@ -48,7 +48,7 @@ Target structure and refactor order: [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## 3. Additional Router Diagnostics Adapters
 
-**Goal:** Expand `src/router_audit.rs` cleanly behind the existing `RouterAdapterKind` dispatch while staying read-only and credential-safe.
+**Goal:** Expand `src/router/audit.rs` cleanly behind the existing `RouterAdapterKind` dispatch while staying read-only and credential-safe.
 
 | Planned Adapter | Transport & Auth | Data Collected |
 |---|---|---|
@@ -61,7 +61,7 @@ All new adapters must enforce `validate_local_host()` (private/loopback IPv4 onl
 
 ## 4. End-of-Life Tracking & UI Session Compare
 
-- **Router EOL Warnings:** Flag hardware/firmware families in `src/advice.rs` when vendor security support is older than a configurable threshold (e.g. 3 years).
+- **Router EOL Warnings:** Flag hardware/firmware families in `src/router/advice.rs` when vendor security support is older than a configurable threshold (e.g. 3 years).
 - ~~**Web UI Multi-Session Compare View**~~ — done in 0.5.0 (Sessions view).
 - **Additional UI Languages:** Community locale files following [docs/I18N.md](I18N.md) (Spanish, Polish, German, French, etc.).
 
@@ -85,7 +85,7 @@ All new adapters must enforce `validate_local_host()` (private/loopback IPv4 onl
 
 **Goal & Module Boundary:** Turn raw diagnostics into an actionable, redacted, audience-specific escalation package without duplicating any detection logic.
 - Implement a dedicated pure-Rust synthesis and redaction module `src/support_report.rs` (`#![forbid(unsafe_code)]`, offline-first, CSP-safe).
-- Keep `src/analyze/` and `src/compare.rs` strictly as forensic detection engines, and `src/advice.rs`, `src/router_audit.rs`, and `src/cve.rs` strictly as diagnostic producers. `support_report` consumes their typed outputs (`Report`, `CompareReport`, `AdviceResponse`, `RouterAudit`, `CveLookupResponse`, `RfPathEstimate`) and formats them for external recipients.
+- Keep `src/analyze/` and `src/compare.rs` strictly as forensic detection engines, and `src/router/advice.rs`, `src/router/audit.rs`, and `src/router/cve.rs` strictly as diagnostic producers. `support_report` consumes their typed outputs (`Report`, `CompareReport`, `AdviceResponse`, `RouterAudit`, `CveLookupResponse`, `RfPathEstimate`) and formats them for external recipients.
 
 ### Audience Profiles (`SupportAudience`)
 1. **`isp` — ISP Support Ticket** (built to skip tier-1 reboot scripts):

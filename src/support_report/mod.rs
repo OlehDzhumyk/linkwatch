@@ -14,9 +14,9 @@ mod tests;
 
 use crate::analyze::{Episode, IfaceReport, Report, RouterLine, is_load_provoked};
 use crate::compare::{CompareOpts, CompareReport, CorrelatedKind, NetworkMatch, SessionRow, SessionView, attach_site_rf, compare};
-use crate::cve::CveLookupResponse;
+use crate::router::CveLookupResponse;
 use crate::model::{IncidentOrigin, IfaceRole, Verdict};
-use crate::router_audit::RouterAudit;
+use crate::router::RouterAudit;
 use crate::site::{RfPathEstimate, Site};
 use chrono::{DateTime, Local, Utc};
 use serde::{Deserialize, Serialize};
@@ -1020,7 +1020,7 @@ pub fn build_pack(input: &SupportInput<'_>, opts: &SupportOpts) -> SupportPack {
 
     // Security & hardware audit findings (S7).
     let mut security_notes = Vec::new();
-    let risky_ports: Vec<&crate::router_audit::PortCheck> = input
+    let risky_ports: Vec<&crate::router::PortCheck> = input
         .router_audit
         .map(|a| a.ports.iter().filter(|p| p.open && matches!(p.risk.as_str(), "high" | "warn")).collect())
         .unwrap_or_default();
