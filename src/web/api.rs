@@ -2,13 +2,15 @@
 //! session files on a blocking thread with hard limits on lines and results.
 
 use super::{AppState, Authed};
-use crate::analyze::{Analyzer, Msg, Opts, Report};
+use crate::analyze::{Msg, Report};
 use crate::live::{EVENTS_KEPT, IfaceStatus, LAN_HISTORY_KEPT, LanPoint, MINUTES_KEPT, MinuteBucket};
 use crate::model::{
     Envelope, HostSample, IfaceRole, IncidentOrigin, LanSample, NetworkFingerprint, PathState,
     Record, RouterSample, ScanReport, SpeedResult, Stream, Verdict,
 };
 use crate::control::{SendError, SessionRequest};
+use crate::session::{self, LoadOpts};
+use crate::verdict;
 use crate::site::{BuildingView, Site};
 use crate::store::read;
 use std::sync::Arc;
@@ -30,6 +32,12 @@ use tokio_stream::wrappers::BroadcastStream;
 
 /// Most lines read from one session stream for one request.
 const MAX_SCAN_LINES: usize = 3_000_000;
+
+/// How the web reads a session: like `linkwatch analyze`, but with the line limit
+/// ([`MAX_SCAN_LINES`]) and without `--reclassify`.
+fn web_load_opts() -> LoadOpts {
+    LoadOpts { max_lines: Some(MAX_SCAN_LINES), ..Default::default() }
+}
 /// Most sessions listed.
 const MAX_SESSIONS: usize = 500;
 const MAX_HOURS: u32 = (MINUTES_KEPT / 60) as u32;
@@ -1393,111 +1401,30 @@ fn all_stream_files_stamp(dir: &Path) -> String {
     parts.join(",")
 }
 
-fn dominant_cause(rep: &Report) -> Option<Verdict> {
-    let mut counts: BTreeMap<usize, (Verdict, u32, f64)> = BTreeMap::new();
-    let key_of = |v: Verdict| match v {
-        Verdict::AllOk => 0,
-        Verdict::WifiProblem => 1,
-        Verdict::WiredProblem => 2,
-        Verdict::RouterProblem => 3,
-        Verdict::LineProblem => 4,
-        Verdict::InternetProblem => 5,
-        Verdict::Dns => 6,
-        Verdict::SinglePath => 7,
-        Verdict::Unknown => 8,
-    };
-    for ep in &rep.episodes {
-        if ep.origin == IncidentOrigin::Observer || crate::analyze::is_load_provoked(ep) {
-            continue;
-        }
-        let Some(c) = ep.cause else { continue };
-        if matches!(c, Verdict::AllOk | Verdict::Unknown) {
-            continue;
-        }
-        let e = counts.entry(key_of(c)).or_insert((c, 0, 0.0));
-        e.1 += 1;
-        e.2 += ep.duration_s;
-    }
-    counts
-        .into_values()
-        .max_by(|a, b| a.1.cmp(&b.1).then_with(|| a.2.total_cmp(&b.2)))
-        .map(|(c, _, _)| c)
-}
-
-/// Verdict explanation: stable code + placeholder values for the UI, and the English text.
-struct VerdictText {
-    code: &'static str,
-    args: BTreeMap<String, String>,
-    text: String,
-}
-
 /// A cached report with the verdict sentence of the current live verdict: the report may be up
 /// to [`REPORT_FRESH`] old, but its headline must never contradict the live status.
 fn with_live_verdict(rep: &ReportResponse, live: Option<Verdict>) -> Response {
     if rep.verdict == live {
         return json_body(rep);
     }
-    let vt = explain_verdict(live, rep.network_incidents, rep.observer_incidents, &rep.ifaces);
+    let wifi_signal = rep.ifaces.iter().find(|i| i.role == Some(IfaceRole::Wifi)).and_then(|i| i.signal_med);
+    let h = verdict::explain(live, rep.network_incidents, rep.observer_incidents, wifi_signal);
     let Ok(mut v) = serde_json::to_value(rep) else { return json_body(rep) };
     if let Some(o) = v.as_object_mut() {
         o.insert("verdict".into(), serde_json::to_value(live).unwrap_or_default());
-        o.insert("verdict_summary".into(), vt.text.into());
-        o.insert("verdict_code".into(), vt.code.into());
-        o.insert("verdict_args".into(), serde_json::to_value(vt.args).unwrap_or_default());
+        o.insert("verdict_summary".into(), h.text.into());
+        o.insert("verdict_code".into(), h.code.into());
+        o.insert("verdict_args".into(), serde_json::to_value(h.args).unwrap_or_default());
     }
     json_body(&v)
 }
 
-fn explain_verdict(verdict: Option<Verdict>, net_inc: u32, obs_inc: u32, ifaces: &[ReportIface]) -> VerdictText {
-    let wifi_sig = ifaces
-        .iter()
-        .find(|i| i.role == Some(IfaceRole::Wifi))
-        .and_then(|i| i.signal_med);
-    let one = |code, text: &str| VerdictText { code, args: BTreeMap::new(), text: text.into() };
-    let with = |code, k: &str, v: String, text: String| VerdictText { code, args: BTreeMap::from([(k.to_string(), v)]), text };
-    match verdict {
-        Some(Verdict::AllOk) => {
-            if obs_inc > 0 && net_inc == 0 {
-                with("all_ok_observer", "n", obs_inc.to_string(), format!("Network stayed healthy ({obs_inc} observer-host incident(s) excluded)."))
-            } else if net_inc > 0 {
-                with("all_ok_earlier", "n", net_inc.to_string(), format!("Paths are healthy right now; {net_inc} earlier incident(s) recorded in this session."))
-            } else {
-                one("all_ok_clean", "All monitored paths are healthy with no drops recorded.")
-            }
-        }
-        Some(Verdict::WifiProblem) => match wifi_sig {
-            Some(s) if s < -75.0 => with("wifi_weak", "dbm", format!("{s:.0}"), format!("Ethernet stayed stable while Wi-Fi failed — weak Wi-Fi signal (median {s:.0} dBm).")),
-            _ => one("wifi", "Ethernet stayed stable while Wi-Fi failed — issue is on the wireless hop."),
-        },
-        Some(Verdict::WiredProblem) => one("wired", "Wi-Fi stayed up while the wired path failed — check Ethernet cable or port."),
-        Some(Verdict::RouterProblem) => one("router", "All monitored paths failed at the router — router rebooted, stalled, or LAN stopped responding."),
-        Some(Verdict::LineProblem) => one("line", "All paths reached the router but failed at the ISP hop — issue is on the access line."),
-        Some(Verdict::InternetProblem) => one("internet", "Local network and ISP hop answered, but external internet targets timed out."),
-        Some(Verdict::Dns) => one("dns", "IP probes succeeded, but DNS name resolution failed."),
-        Some(Verdict::SinglePath) => {
-            if net_inc == 0 {
-                one("single_clean", "Monitoring a single path cleanly (connect Ethernet alongside Wi-Fi to isolate Wi-Fi vs ISP faults).")
-            } else {
-                with("single_incidents", "n", net_inc.to_string(), format!("Single monitored path had {net_inc} incident(s); add a second path to separate Wi-Fi from the line."))
-            }
-        }
-        Some(Verdict::Unknown) | None => one("waiting", "Waiting for enough samples to classify path health."),
-    }
+fn analyze_session_raw(dir: &Path) -> anyhow::Result<Report> {
+    Ok(session::load(dir, &web_load_opts())?.report)
 }
 
-fn analyze_session_raw(dir: &Path) -> Report {
-    let meta: Option<crate::model::SessionMeta> = read::read_json_file(&dir.join(crate::store::META_FILE));
-    let mut analyzer = Analyzer::new(Opts::for_session(meta.as_ref()));
-    for st in Stream::ALL {
-        for env in read::iter(dir, st).take(MAX_SCAN_LINES) {
-            analyzer.push(&env);
-        }
-    }
-    analyzer.finish(&[])
-}
-
-fn analyze_session_dir(dir: &Path, id: String, live_verdict: Option<Verdict>) -> ReportResponse {
-    let rep = analyze_session_raw(dir);
+fn analyze_session_dir(dir: &Path, id: String, live_verdict: Option<Verdict>) -> anyhow::Result<ReportResponse> {
+    let rep = analyze_session_raw(dir)?;
     let ifaces: Vec<ReportIface> = rep
         .ifaces
         .iter()
@@ -1537,13 +1464,7 @@ fn analyze_session_dir(dir: &Path, id: String, live_verdict: Option<Verdict>) ->
                 .collect(),
         })
         .collect();
-    let verdict = live_verdict
-        .or_else(|| dominant_cause(&rep))
-        .or(match rep.ifaces.len() {
-            0 => None,
-            1 => Some(Verdict::SinglePath),
-            _ => Some(Verdict::AllOk),
-        });
+    let headline = verdict::headline(&rep, live_verdict);
     let mut episodes: Vec<ReportEpisode> = rep
         .episodes
         .iter()
@@ -1566,16 +1487,15 @@ fn analyze_session_dir(dir: &Path, id: String, live_verdict: Option<Verdict>) ->
         .collect();
     // Ensure strict newest-first order when multiple interfaces had interleaved episodes.
     episodes.sort_by_key(|a| std::cmp::Reverse(a.start));
-    let vt = explain_verdict(verdict, rep.network_incidents, rep.observer_incidents, &ifaces);
-    ReportResponse {
+    Ok(ReportResponse {
         session: id,
         from: rep.from,
         to: rep.to,
         hours: rep.hours,
-        verdict,
-        verdict_summary: vt.text,
-        verdict_code: vt.code.into(),
-        verdict_args: vt.args,
+        verdict: headline.verdict,
+        verdict_summary: headline.text,
+        verdict_code: headline.code.into(),
+        verdict_args: headline.args,
         network_incidents: rep.network_incidents,
         load_incidents: rep.load_incidents,
         observer_incidents: rep.observer_incidents,
@@ -1600,7 +1520,7 @@ fn analyze_session_dir(dir: &Path, id: String, live_verdict: Option<Verdict>) ->
             arp_alive_max: l.arp_alive_max,
             unique_seen_max: l.unique_seen_max,
         }),
-    }
+    })
 }
 
 fn resolve_report_target(st: &AppState, session: Option<String>) -> Result<(String, Option<PathBuf>), ApiError> {
@@ -1623,16 +1543,16 @@ async fn report(State(st): State<AppState>, Query(q): Query<ReportQuery>) -> Api
     let live_verdict = st.live.read(|s| s.verdict);
     let (id, dir) = resolve_report_target(&st, q.session)?;
     let Some(dir) = dir else {
-        let vt = explain_verdict(live_verdict, 0, 0, &[]);
+        let headline = verdict::headline(&Report::default(), live_verdict);
         return Ok(json_body(&ReportResponse {
             session: id,
             from: None,
             to: None,
             hours: 0.0,
-            verdict: live_verdict,
-            verdict_summary: vt.text,
-            verdict_code: vt.code.into(),
-            verdict_args: vt.args,
+            verdict: headline.verdict,
+            verdict_summary: headline.text,
+            verdict_code: headline.code.into(),
+            verdict_args: headline.args,
             network_incidents: 0,
             load_incidents: 0,
             observer_incidents: 0,
@@ -1667,16 +1587,17 @@ async fn report(State(st): State<AppState>, Query(q): Query<ReportQuery>) -> Api
             Some(hit) => hit,
             None => {
                 drop(c);
-                let built = Arc::new(analyze_session_dir(&dir, id, live_verdict));
+                let built = Arc::new(analyze_session_dir(&dir, id, live_verdict)?);
                 c = cache.lock().unwrap_or_else(|e| e.into_inner());
                 c.put(key, built.clone());
                 built
             }
         };
         c.put_fresh(fresh_key, built.clone());
-        built
+        Ok::<_, anyhow::Error>(built)
     })
-    .await?;
+    .await?
+    .map_err(internal)?;
     Ok(json_body(&*rep))
 }
 
@@ -1712,7 +1633,7 @@ async fn report_export(State(st): State<AppState>, Query(q): Query<ExportQuery>)
     let Some(dir) = dir else {
         return Err(ApiError(StatusCode::NOT_FOUND, "session has no recorded data yet".into()));
     };
-    let rep = blocking(&st, move || analyze_session_raw(&dir)).await?;
+    let rep = blocking(&st, move || analyze_session_raw(&dir)).await?.map_err(internal)?;
     let slug = safe_slug(&id, "session");
     if fmt == "json" {
         let bytes = serde_json::to_vec_pretty(&rep).map_err(internal)?;
@@ -1755,7 +1676,7 @@ async fn compare_sessions(State(st): State<AppState>, Query(q): Query<CompareQue
     let rep = blocking(&st, move || {
         let mut views = Vec::with_capacity(dirs.len());
         for d in dirs {
-            views.push(crate::compare::SessionView::load(&d)?);
+            views.push(session::load(&d, &web_load_opts())?);
         }
         let mut rep = crate::compare::compare(views, &crate::compare::CompareOpts { tolerance_s: tol });
         if let Some(site) = site.as_deref() {
@@ -1965,7 +1886,7 @@ async fn support_report(
     let pack = blocking(&st, move || {
         let mut views = Vec::with_capacity(dirs.len());
         for d in dirs {
-            views.push(crate::compare::SessionView::load(&d)?);
+            views.push(session::load(&d, &web_load_opts())?);
         }
         Ok::<_, anyhow::Error>(build_pack(
             &SupportInput {

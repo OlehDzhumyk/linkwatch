@@ -22,10 +22,12 @@ mod router;
 mod router_audit;
 mod run;
 mod security;
+mod session;
 mod site;
 mod speed;
 mod store;
 mod support_report;
+mod verdict;
 mod web;
 mod wifi;
 
@@ -219,7 +221,6 @@ fn main() -> ExitCode {
 }
 
 fn analyze_cmd(cfg: &config::Config, session: Option<String>, router_log: Option<PathBuf>, json: bool, reclassify: bool) -> anyhow::Result<bool> {
-    use model::Stream;
     let dir = match session {
         Some(s) if std::path::Path::new(&s).is_dir() => PathBuf::from(s),
         Some(s) => cfg.data_dir.join(s),
@@ -230,29 +231,11 @@ fn analyze_cmd(cfg: &config::Config, session: Option<String>, router_log: Option
             .ok_or_else(|| anyhow::anyhow!("no sessions in {}", cfg.data_dir.display()))?,
     };
     anyhow::ensure!(dir.is_dir(), "session not found: {}", dir.display());
-    let router = match router_log {
+    let router_log = match router_log {
         Some(p) => analyze::parse_router_log(&std::fs::read_to_string(&p).map_err(|e| anyhow::anyhow!("{}: {e}", p.display()))?),
         None => vec![],
     };
-    let meta: Option<model::SessionMeta> = std::fs::read(dir.join("meta.json")).ok().and_then(|b| serde_json::from_slice(&b).ok());
-    let mut a = analyze::Analyzer::new(analyze::Opts::for_session(meta.as_ref()));
-    let mut skipped = 0;
-    let mut rc = reclassify.then(|| analyze::reclassify::Reclassifier::for_session(meta.as_ref()));
-    // Samples must be in order per interface; the other streams are used as sets.
-    for st in Stream::ALL {
-        let mut it = store::read::iter(&dir, st);
-        for mut e in it.by_ref() {
-            if let Some(rc) = rc.as_mut() {
-                rc.apply(&mut e);
-            }
-            a.push(&e);
-        }
-        skipped += it.skipped();
-    }
-    let mut rep = a.finish(&router);
-    if skipped > 0 {
-        rep.monitor_gaps.push(format!("{skipped} malformed lines skipped while reading"));
-    }
+    let rep = crate::session::load(&dir, &crate::session::LoadOpts { reclassify, router_log, max_lines: None })?.report;
     if json {
         println!("{}", serde_json::to_string_pretty(&rep)?);
     } else {
@@ -269,7 +252,7 @@ fn compare_cmd(cfg: &config::Config, sessions: Vec<String>, tolerance_s: f64, js
         } else {
             cfg.data_dir.join(&s)
         };
-        views.push(compare::SessionView::load_with(&dir, reclassify)?);
+        views.push(session::load(&dir, &session::LoadOpts { reclassify, ..Default::default() })?);
     }
     let rep = compare::compare(views, &compare::CompareOpts { tolerance_s: tolerance_s.max(0.0) });
     if json {
@@ -308,7 +291,7 @@ fn support_report_cmd(
     };
     let mut views = Vec::with_capacity(dirs.len());
     for d in dirs {
-        views.push(compare::SessionView::load_with(&d, reclassify)?);
+        views.push(session::load(&d, &session::LoadOpts { reclassify, ..Default::default() })?);
     }
     let site = cfg.site.file.as_ref().and_then(|p| site::Site::load(p).ok());
     let router_lines = match router_log {
