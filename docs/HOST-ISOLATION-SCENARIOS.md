@@ -208,7 +208,7 @@ Each analyzed session produces an explicit **Observer Trust Score**:
 | **P3** | `linkwatch calibrate` (single baseline + co-located two-probe `ΔRSSI` / `ΔRTT` / clock skew `calibration.json`) | H5, H10 |
 
 ### Status (2026-11-27)
-- **Done:** per-interface `rp_filter` (`max(all, dev)`), cable speed/duplex and NIC CRC/frame errors, USB/PCIe power control, VPN/tunnel interfaces, conntrack fill, network managers, rfkill/Bluetooth, random MAC, MTU (`src/hostcheck.rs`, part of `linkwatch check`).
+- **Done:** per-interface `rp_filter` (`max(all, dev)`), cable speed/duplex and NIC CRC/frame errors, USB/PCIe power control, VPN/tunnel interfaces, conntrack fill, network managers, rfkill/Bluetooth, random MAC, MTU (`src/check/host.rs`, part of `linkwatch check`).
 - **Done:** host's own traffic (H4): ticks with rx+tx above 10 Mbit/s outside the speed test (`Opts::self_traffic_bps`) do not count as stalls; short unconfirmed drops in that time are `Observer` incidents; `IfaceReport.self_traffic_s` / `self_traffic_stalls` and the `o_self_traffic` finding.
 - **Done:** packet rate (H16): `Sample.pkt_delta`, limit 2000 packets/s.
 - **Done:** Wi-Fi country (H18) in `check`; default-route metrics (H21) and local resolver (H14).
@@ -216,6 +216,6 @@ Each analyzed session produces an explicit **Observer Trust Score**:
   - `polluted`: Wi-Fi power-save on; ≥ 1 % late ticks; throttling in ≥ 10 % of host samples.
   - `caution`: ≥ 0.1 % late ticks; any throttling; NTP not synchronized; ≥ 60 s of own heavy traffic; any observer incident; CPU peak ≥ 85 %.
 - **Done:** clock truth (H10) without `unsafe`: `host::chrony_tracking()` asks `chronyd` on its read-only UDP command port (127.0.0.1:323, `REQ_TRACKING`); `check` shows stratum, offset and max error, and `HostSample.clock_synced` is false when chrony runs but is not synchronized. systemd-timesyncd keeps its `synchronized` marker file.
-- **Done:** `linkwatch check --deep` (`src/deepcheck.rs`, about 6 s): timer wake-up jitter (100 x 20 ms), loopback ICMP RTT, PSI CPU/IO pressure, and per-interface path proof (5 echoes to the gateway; the interface's `rx_packets` must grow by at least the number of replies). Limit: on a busy interface other traffic can hide a reply that went to the other path, so the proof is strong only when it fails.
+- **Done:** `linkwatch check --deep` (`src/check/deep.rs`, about 6 s): timer wake-up jitter (100 x 20 ms), loopback ICMP RTT, PSI CPU/IO pressure, and per-interface path proof (5 echoes to the gateway; the interface's `rx_packets` must grow by at least the number of replies). Limit: on a busy interface other traffic can hide a reply that went to the other path, so the proof is strong only when it fails.
 - **Done:** `linkwatch calibrate [--seconds 60]` (single node): gateway RTT p50/p95/p99, loss and NIC error delta per interface at 5 Hz, plus timer jitter; written to `<data_dir>/calibration.json`. The file is informational: nothing reads it yet (`analyze`, `compare` and `support_report` ignore it).
 - **Open:** dual-probe calibration (`calibrate --with`: ΔRSSI, ΔRTT, clock skew between two monitors) and use of `calibration.json` in `compare` / `support_report`; DF large-packet probe (H21).

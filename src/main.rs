@@ -10,17 +10,14 @@ mod classify;
 mod compare;
 mod config;
 mod control;
-mod deepcheck;
 mod cve;
 mod host;
-mod hostcheck;
 mod lan;
 mod link;
 mod live;
 mod model;
 mod notify;
 mod probe;
-mod readiness;
 mod router;
 mod router_audit;
 mod run;
@@ -174,10 +171,10 @@ fn main() -> ExitCode {
             Cmd::Check { deep } => {
                 let mut items = check::check(&cfg).await;
                 if deep {
-                    items.extend(deepcheck::deep(&run::resolve_ifaces(&cfg), cfg.targets.gateway).await);
+                    items.extend(check::deep(&run::resolve_ifaces(&cfg), cfg.targets.gateway).await);
                 }
                 let ok = check::print(&items);
-                readiness::print(&readiness::assess(&items, &cfg));
+                check::readiness::print(&check::readiness::assess(&items, &cfg));
                 Ok(ok)
             }
             Cmd::Config => {
@@ -192,8 +189,8 @@ fn main() -> ExitCode {
             Cmd::Calibrate { seconds } => {
                 let ifaces = run::resolve_ifaces(&cfg);
                 eprintln!("calibrating for {seconds} s: keep this device and the network idle ...");
-                let c = deepcheck::calibrate(&ifaces, cfg.targets.gateway, seconds).await;
-                let ok = check::print(&deepcheck::calibration_items(&c));
+                let c = check::calibrate(&ifaces, cfg.targets.gateway, seconds).await;
+                let ok = check::print(&check::calibration_items(&c));
                 let path = cfg.data_dir.join("calibration.json");
                 match serde_json::to_vec_pretty(&c).map_err(anyhow::Error::from).and_then(|j| std::fs::write(&path, j).map_err(anyhow::Error::from)) {
                     Ok(()) => println!("written: {}", path.display()),

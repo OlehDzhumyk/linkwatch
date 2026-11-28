@@ -17,7 +17,7 @@ The advisor tells the user what spoils which conclusion. It does not list every 
 ## Phase 1: `linkwatch check`
 
 `check` prints its item lines, then a readiness block. `check::Item.code` is the stable code;
-`src/readiness.rs` maps codes to rules. Levels: `GO`, `GO WITH CAVEATS`, `NO-GO` (a blocking item
+`src/check/readiness.rs` maps codes to rules. Levels: `GO`, `GO WITH CAVEATS`, `NO-GO` (a blocking item
 failed). The exit code is unchanged: 1 only when an item is FAIL.
 
 | Code | Spoils | Level |

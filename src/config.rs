@@ -233,7 +233,7 @@ pub struct Alerts {
 #[serde(default, deny_unknown_fields)]
 pub struct Advisor {
     /// Risk codes the user accepts. An accepted risk is never reported (`linkwatch check`, run events).
-    /// Blocking items cannot be accepted. Codes: see `readiness::CODES`.
+    /// Blocking items cannot be accepted. Codes: see `check::readiness::CODES`.
     pub accept: Vec<String>,
 }
 
@@ -475,9 +475,9 @@ impl Config {
         }
         for code in &self.advisor.accept {
             anyhow::ensure!(
-                crate::readiness::is_acceptable(code),
+                crate::check::readiness::is_acceptable(code),
                 "advisor.accept: {code:?} is not an acceptable risk code (acceptable: {})",
-                crate::readiness::acceptable_codes().join(", ")
+                crate::check::readiness::acceptable_codes().join(", ")
             );
         }
         anyhow::ensure!((5..=86_400).contains(&self.alerts.min_outage_s), "alerts.min_outage_s must be 5..=86400");
