@@ -7,7 +7,10 @@ use std::collections::VecDeque;
 
 /// Instantaneous state from one sample, before windowing and debouncing.
 /// `last_dns` is the most recent DNS result (DNS runs less often than ticks).
-pub fn instant_state(s: &Sample, isp_known: bool, last_dns: Option<&ProbeResult>) -> PathState {
+///
+/// `gw_seen` is true when the gateway has answered ICMP at least once in this run. A gateway that
+/// never answers ICMP says nothing about the LAN, so its timeout is not a `LanDown`.
+pub fn instant_state(s: &Sample, isp_known: bool, last_dns: Option<&ProbeResult>, gw_seen: bool) -> PathState {
     let l = &s.link;
     if !l.present || !l.up || !l.carrier {
         return PathState::LinkDown;
@@ -26,7 +29,7 @@ pub fn instant_state(s: &Sample, isp_known: bool, last_dns: Option<&ProbeResult>
             }
         return PathState::Ok;
     }
-    if !gw_ok {
+    if !gw_ok && gw_seen {
         return PathState::LanDown;
     }
     match (isp_known, isp_ok) {
@@ -53,6 +56,8 @@ pub struct PathClassifier {
     current: PathState,
     since: chrono::DateTime<chrono::Utc>,
     candidate: Option<(PathState, u32)>,
+    /// The gateway answered ICMP at least once in this run.
+    gw_seen: bool,
 }
 
 /// A debounced transition.
@@ -66,7 +71,7 @@ pub struct Transition {
 
 impl PathClassifier {
     pub fn new(cfg: Cfg, now: chrono::DateTime<chrono::Utc>) -> Self {
-        Self { cfg, window: VecDeque::new(), current: PathState::Unknown, since: now, candidate: None }
+        Self { cfg, window: VecDeque::new(), current: PathState::Unknown, since: now, candidate: None, gw_seen: false }
     }
 
     pub fn state(&self) -> PathState {
@@ -86,7 +91,8 @@ impl PathClassifier {
         last_dns: Option<&ProbeResult>,
         now: chrono::DateTime<chrono::Utc>,
     ) -> (PathState, Option<Transition>) {
-        let base = instant_state(s, isp_known, last_dns);
+        self.gw_seen |= s.gw.as_ref().is_some_and(|g| g.ok);
+        let base = instant_state(s, isp_known, last_dns, self.gw_seen);
         // Speed-test ticks do not count for loss/latency: we saturate the link ourselves.
         let counted = base == PathState::Ok && !s.speedtest_active && !s.scan_active;
         self.window.push_back(Obs {
@@ -120,7 +126,9 @@ impl PathClassifier {
         let gw_loss = if gw_answers { obs.iter().filter(|o| o.gw_fail).count() as f64 / n * 100.0 } else { 0.0 };
         let net_loss = obs.iter().filter(|o| o.net_fail).count() as f64 / n * 100.0;
         // net_fail counts partial loss (one of three targets). Use half weight for it.
-        if gw_loss > self.cfg.degraded_loss_pct || net_loss / 2.0 > self.cfg.degraded_loss_pct {
+        // One lost probe in a window is noise, whatever the percentage says.
+        let gw_lost = obs.iter().filter(|o| o.gw_fail).count();
+        if (gw_lost >= 2 && gw_loss > self.cfg.degraded_loss_pct) || net_loss / 2.0 > self.cfg.degraded_loss_pct {
             return true;
         }
         let med = |v: Vec<f64>| median(v);
@@ -270,27 +278,27 @@ mod tests {
 
     #[test]
     fn instant_states() {
-        assert_eq!(instant_state(&sample(true, true, 3), true, None), PathState::Ok);
-        assert_eq!(instant_state(&sample(false, false, 0), true, None), PathState::LanDown);
-        assert_eq!(instant_state(&sample(true, false, 0), true, None), PathState::IspDown);
-        assert_eq!(instant_state(&sample(true, true, 0), true, None), PathState::WanDown);
-        assert_eq!(instant_state(&sample(true, false, 0), false, None), PathState::WanDown);
+        assert_eq!(instant_state(&sample(true, true, 3), true, None, true), PathState::Ok);
+        assert_eq!(instant_state(&sample(false, false, 0), true, None, true), PathState::LanDown);
+        assert_eq!(instant_state(&sample(true, false, 0), true, None, true), PathState::IspDown);
+        assert_eq!(instant_state(&sample(true, true, 0), true, None, true), PathState::WanDown);
+        assert_eq!(instant_state(&sample(true, false, 0), false, None, true), PathState::WanDown);
         // Router ignores ICMP but internet works: not an outage.
-        assert_eq!(instant_state(&sample(false, true, 2), true, None), PathState::Ok);
+        assert_eq!(instant_state(&sample(false, true, 2), true, None, true), PathState::Ok);
         let mut s = sample(true, true, 3);
         s.link.carrier = false;
-        assert_eq!(instant_state(&s, true, None), PathState::LinkDown);
+        assert_eq!(instant_state(&s, true, None, true), PathState::LinkDown);
         let mut s = sample(true, true, 3);
         s.link.ipv4 = None;
-        assert_eq!(instant_state(&s, true, None), PathState::NoIp);
-        assert_eq!(instant_state(&sample(true, true, 3), true, Some(&ProbeResult::fail("timeout"))), PathState::DnsDown);
+        assert_eq!(instant_state(&s, true, None, true), PathState::NoIp);
+        assert_eq!(instant_state(&sample(true, true, 3), true, Some(&ProbeResult::fail("timeout")), true), PathState::DnsDown);
     }
 
     #[test]
     fn tcp_success_counts_as_internet() {
         let mut s = sample(true, true, 0);
         s.tcp = Some(MultiResult { ok: 1, of: 2, rtt_ms: Some(20.0) });
-        assert_eq!(instant_state(&s, true, None), PathState::Ok);
+        assert_eq!(instant_state(&s, true, None, true), PathState::Ok);
     }
 
     #[test]
@@ -329,13 +337,9 @@ mod tests {
     fn degraded_by_loss_and_latency() {
         let mut c = PathClassifier::new(cfg(), t0());
         let sec = |n| t0() + chrono::Duration::seconds(n);
-        // 10 % gateway loss with internet still answering => Degraded.
+        // 20 % gateway loss (2 of 10) with internet still answering => Degraded.
         for i in 0..10 {
-            let mut s = sample(i % 10 != 0, true, 3);
-            if i % 10 == 0 {
-                s.gw = Some(ProbeResult::fail("timeout"));
-            }
-            c.feed(&s, true, None, sec(i));
+            c.feed(&sample(i % 5 != 0, true, 3), true, None, sec(i));
         }
         assert_eq!(c.state(), PathState::Degraded);
 
@@ -346,6 +350,48 @@ mod tests {
             c.feed(&s, true, None, sec(i));
         }
         assert_eq!(c.state(), PathState::Degraded);
+    }
+
+    #[test]
+    fn single_lost_gateway_ping_is_not_degraded() {
+        let mut c = PathClassifier::new(cfg(), t0());
+        let sec = |n| t0() + chrono::Duration::seconds(n);
+        // 1 of 10 is 10 % > 2 %, but one lost probe is noise.
+        for i in 0..10 {
+            c.feed(&sample(i != 4, true, 3), true, None, sec(i));
+        }
+        assert_eq!(c.state(), PathState::Ok);
+    }
+
+    #[test]
+    fn gateway_never_answering_icmp_is_not_lan_down() {
+        let s = sample(false, true, 0);
+        assert_eq!(instant_state(&s, true, None, false), PathState::WanDown);
+        assert_eq!(instant_state(&sample(false, false, 0), true, None, false), PathState::IspDown);
+        assert_eq!(instant_state(&sample(false, false, 0), false, None, false), PathState::WanDown);
+        // Internet ok: still Ok.
+        assert_eq!(instant_state(&sample(false, true, 3), true, None, false), PathState::Ok);
+        // Gateway answered before: a timeout is LanDown.
+        assert_eq!(instant_state(&s, true, None, true), PathState::LanDown);
+
+        // Through the classifier: no answer ever, internet outage => WanDown, never LanDown.
+        let mut c = PathClassifier::new(cfg(), t0());
+        let sec = |n| t0() + chrono::Duration::seconds(n);
+        for i in 0..5 {
+            c.feed(&sample(false, true, 3), true, None, sec(i));
+        }
+        for i in 5..9 {
+            c.feed(&sample(false, true, 0), true, None, sec(i));
+        }
+        assert_eq!(c.state(), PathState::WanDown);
+
+        // Once the gateway answers, a later timeout is LanDown again.
+        let mut c = PathClassifier::new(cfg(), t0());
+        c.feed(&sample(true, true, 3), true, None, sec(0));
+        for i in 1..5 {
+            c.feed(&sample(false, true, 0), true, None, sec(i));
+        }
+        assert_eq!(c.state(), PathState::LanDown);
     }
 
     #[test]

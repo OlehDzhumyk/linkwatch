@@ -7,6 +7,15 @@ pub(super) fn link_key(l: &LinkState) -> (bool, bool, bool, Option<Ipv4Addr>, Op
     (l.present, l.up, l.carrier, l.ipv4, l.prefix_len, l.gateway)
 }
 
+/// Record carrier of an interface. Returns true when the interface had link at some point in
+/// this run, so that it may take part in the verdict.
+pub(super) fn note_link(had_link: &mut HashSet<String>, iface: &str, carrier: bool) -> bool {
+    if carrier && !had_link.contains(iface) {
+        had_link.insert(iface.to_string());
+    }
+    had_link.contains(iface)
+}
+
 pub(super) async fn tick_loop(ctx: Ctx, summary: Arc<Mutex<Summary>>) -> anyhow::Result<()> {
     let cfg = ctx.cfg.clone();
     let period = Duration::from_millis(cfg.intervals.probe_ms);
@@ -24,6 +33,9 @@ pub(super) async fn tick_loop(ctx: Ctx, summary: Arc<Mutex<Summary>>) -> anyhow:
     let mut last_dns: HashMap<String, ProbeResult> = HashMap::new();
     // Consecutive failed DNS queries per interface: one lost UDP query is not an outage.
     let mut dns_fails: HashMap<String, u32> = HashMap::new();
+    // Interfaces that had carrier at least once in this run. A path that never had link
+    // (unused Ethernet port) takes no part in the verdict.
+    let mut had_link: HashSet<String> = HashSet::new();
     let mut verdict = Verdict::Unknown;
     let mut verdict_since = now;
     let mut alert_sent_for: Option<Verdict> = None;
@@ -128,7 +140,9 @@ pub(super) async fn tick_loop(ctx: Ctx, summary: Arc<Mutex<Summary>>) -> anyhow:
             }
             let deb = c.state();
             *sum.state_s.entry(s.iface.clone()).or_default().entry(state_name(deb)).or_default() += period.as_secs_f64();
-            states.push((s.role, deb));
+            if note_link(&mut had_link, &s.iface, s.link.carrier) {
+                states.push((s.role, deb));
+            }
             let acc = accs.entry(s.iface.clone()).or_default();
             ctx.live.update(|snap| {
                 if let Some(il) = snap.ifaces.get_mut(&s.iface) {
@@ -174,6 +188,8 @@ pub(super) async fn tick_loop(ctx: Ctx, summary: Arc<Mutex<Summary>>) -> anyhow:
                     | Verdict::LineProblem
                     | Verdict::InternetProblem
                     | Verdict::Dns
+                    // SinglePath is only returned when the single comparable path is failing.
+                    | Verdict::SinglePath
             );
             if is_bad
                 && alert_sent_for.is_none()
@@ -310,5 +326,37 @@ pub(super) fn multi(rs: &[ProbeResult]) -> MultiResult {
         ok: rs.iter().filter(|r| r.ok).count() as u8,
         of: rs.len() as u8,
         rtt_ms: classify::median(rs.iter().filter_map(|r| r.rtt_ms).collect()),
+    }
+}
+
+#[cfg(test)]
+mod verdict_input_tests {
+    use super::*;
+
+    fn tick(had: &mut HashSet<String>, wifi: PathState, eth: PathState, wifi_c: bool, eth_c: bool) -> Verdict {
+        let mut states = Vec::new();
+        if note_link(had, "wlan0", wifi_c) {
+            states.push((IfaceRole::Wifi, wifi));
+        }
+        if note_link(had, "eth0", eth_c) {
+            states.push((IfaceRole::Ethernet, eth));
+        }
+        classify::verdict(&states, true)
+    }
+
+    #[test]
+    fn unused_ethernet_port_does_not_make_router_problem() {
+        let mut had = HashSet::new();
+        assert_eq!(tick(&mut had, PathState::Ok, PathState::LinkDown, true, false), Verdict::AllOk);
+        let v = tick(&mut had, PathState::LinkDown, PathState::LinkDown, false, false);
+        assert_eq!(v, Verdict::SinglePath);
+    }
+
+    #[test]
+    fn both_paths_had_link_and_lost_it_is_router_problem() {
+        let mut had = HashSet::new();
+        assert_eq!(tick(&mut had, PathState::Ok, PathState::Ok, true, true), Verdict::AllOk);
+        let v = tick(&mut had, PathState::LinkDown, PathState::LinkDown, false, false);
+        assert_eq!(v, Verdict::RouterProblem);
     }
 }
