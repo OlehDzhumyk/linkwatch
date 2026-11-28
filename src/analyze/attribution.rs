@@ -1,5 +1,5 @@
 //! Incident attribution ("detective"): decides how much of an outage the measuring host itself
-//! explains, with an explicit evidence list. Design and scenarios A1–A19:
+//! explains, with an explicit evidence list. Design and scenarios A1–A34:
 //! docs/INCIDENT-ATTRIBUTION.md.
 //!
 //! A host effect explains an incident only when it can produce this symptom on this path
@@ -9,6 +9,45 @@
 use super::Msg;
 use crate::model::IfaceRole;
 use serde::{Deserialize, Serialize};
+
+/// Every threshold of the detective, with the reason for its value. Table in
+/// docs/INCIDENT-ATTRIBUTION.md ("Thresholds and why"). Most are engineering estimates.
+mod limits {
+    /// Smallest tick length we trust; guards against a zero or tiny `tick_s`. Engineering estimate.
+    pub const MIN_TICK_S: f64 = 0.2;
+    /// A scan keeps the radio off-channel for a few seconds in total. Engineering estimate.
+    pub const SCAN_BASE_S: f64 = 2.0;
+    /// A full multi-band scan rarely blocks the link longer than this. Engineering estimate.
+    pub const SCAN_MAX_S: f64 = 12.0;
+    /// A speed test loads the line for a while after its last bad tick. Engineering estimate.
+    pub const SPEEDTEST_BASE_S: f64 = 5.0;
+    /// Longest stretch a speed test can plausibly disturb the path. Engineering estimate.
+    pub const SPEEDTEST_MAX_S: f64 = 30.0;
+    /// Queues need a few seconds to drain after heavy own traffic. Engineering estimate.
+    pub const SELF_TRAFFIC_BASE_S: f64 = 5.0;
+    /// Longest stretch own traffic can plausibly disturb the path. Engineering estimate.
+    pub const SELF_TRAFFIC_MAX_S: f64 = 30.0;
+    /// Throttling is only a hint: it can delay ticks for a short time. Engineering estimate.
+    pub const THROTTLE_MAX_S: f64 = 15.0;
+    /// Low memory is only a hint: it can stall the probes for a short time. Engineering estimate.
+    pub const LOW_MEMORY_MAX_S: f64 = 15.0;
+    /// A clock step distorts the timing of about one short window. Engineering estimate.
+    pub const CLOCK_JUMP_MAX_S: f64 = 5.0;
+    /// A driver reset after this offset is a consequence of the outage, not its cause. Engineering estimate.
+    pub const DRIVER_RESET_MAX_OFFSET_S: f64 = 5.0;
+    /// Power-save delays frames and loses a few beacons (interval about 102 ms, IEEE 802.11); a long full loss is not power-save. The 2-tick limit is an engineering estimate.
+    pub const POWER_SAVE_MAX_TICKS: u32 = 2;
+    /// Late ticks are a strong suspect when they make up at least half of the bad ticks. Engineering estimate.
+    pub const OVERRUN_STRONG_SHARE: f64 = 0.5;
+    /// Common rule of thumb: Wi-Fi gets unreliable at -75 dBm or weaker. Engineering estimate.
+    pub const WEAK_SIGNAL_DBM: f64 = -75.0;
+    /// A channel busy 70 % or more of the time leaves little air time. Engineering estimate.
+    pub const BUSY_CHANNEL_PCT: f64 = 70.0;
+    /// A host effect that covers 80 % or more of the outage counts as covering it. Engineering estimate.
+    pub const OBSERVER_RATIO: f64 = 0.8;
+    /// A host effect below 10 % of the outage is noise. Engineering estimate.
+    pub const MIXED_RATIO: f64 = 0.1;
+}
 
 /// Graded result of one incident.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -227,21 +266,21 @@ fn secs(v: f64) -> String {
 
 /// Host effects that apply to this incident, with what they can explain.
 fn candidates(f: &IncidentFacts) -> (Vec<Candidate>, Vec<Evidence>) {
-    let t = f.tick_s.max(0.2);
+    let t = f.tick_s.max(limits::MIN_TICK_S);
     let d = f.duration_s.max(t);
     let mut c = Vec::new();
     let mut notes = Vec::new();
     if f.scan_ticks > 0 && f.role == IfaceRole::Wifi {
-        c.push(Candidate { suspect: Suspect::Scan, explains_s: (f.scan_ticks as f64 * t + 2.0).min(12.0), strength: Strength::Strong, iface_only: true });
+        c.push(Candidate { suspect: Suspect::Scan, explains_s: (f.scan_ticks as f64 * t + limits::SCAN_BASE_S).min(limits::SCAN_MAX_S), strength: Strength::Strong, iface_only: true });
     }
     if f.speedtest_ticks > 0 {
-        c.push(Candidate { suspect: Suspect::SpeedTest, explains_s: (f.speedtest_ticks as f64 * t + 5.0).min(30.0), strength: Strength::Strong, iface_only: false });
+        c.push(Candidate { suspect: Suspect::SpeedTest, explains_s: (f.speedtest_ticks as f64 * t + limits::SPEEDTEST_BASE_S).min(limits::SPEEDTEST_MAX_S), strength: Strength::Strong, iface_only: false });
     }
     if f.self_traffic_ticks > 0 {
-        c.push(Candidate { suspect: Suspect::SelfTraffic, explains_s: (f.self_traffic_ticks as f64 * t + 5.0).min(30.0), strength: Strength::Strong, iface_only: true });
+        c.push(Candidate { suspect: Suspect::SelfTraffic, explains_s: (f.self_traffic_ticks as f64 * t + limits::SELF_TRAFFIC_BASE_S).min(limits::SELF_TRAFFIC_MAX_S), strength: Strength::Strong, iface_only: true });
     }
     if f.overrun_ticks > 0 {
-        let strong = f.ticks > 0 && f.overrun_ticks * 2 >= f.ticks;
+        let strong = f.ticks > 0 && f64::from(f.overrun_ticks) >= limits::OVERRUN_STRONG_SHARE * f64::from(f.ticks);
         c.push(Candidate {
             suspect: Suspect::Overrun,
             explains_s: f.overrun_ticks as f64 * t,
@@ -253,7 +292,7 @@ fn candidates(f: &IncidentFacts) -> (Vec<Candidate>, Vec<Evidence>) {
         c.push(Candidate { suspect: Suspect::Suspend, explains_s: d, strength: Strength::Confirmed, iface_only: false });
     }
     match f.driver_reset_offset_s {
-        Some(off) if off <= 5.0 => c.push(Candidate { suspect: Suspect::DriverReset, explains_s: d, strength: Strength::Strong, iface_only: true }),
+        Some(off) if off <= limits::DRIVER_RESET_MAX_OFFSET_S => c.push(Candidate { suspect: Suspect::DriverReset, explains_s: d, strength: Strength::Strong, iface_only: true }),
         Some(off) => notes.push(Evidence {
             suspect: Some(Suspect::DriverReset),
             explains_s: 0.0,
@@ -263,16 +302,16 @@ fn candidates(f: &IncidentFacts) -> (Vec<Candidate>, Vec<Evidence>) {
         None => {}
     }
     if f.throttled_near {
-        c.push(Candidate { suspect: Suspect::Throttling, explains_s: 15.0, strength: Strength::Weak, iface_only: false });
+        c.push(Candidate { suspect: Suspect::Throttling, explains_s: limits::THROTTLE_MAX_S, strength: Strength::Weak, iface_only: false });
     }
     if f.low_memory_near {
-        c.push(Candidate { suspect: Suspect::LowMemory, explains_s: 15.0, strength: Strength::Weak, iface_only: false });
+        c.push(Candidate { suspect: Suspect::LowMemory, explains_s: limits::LOW_MEMORY_MAX_S, strength: Strength::Weak, iface_only: false });
     }
     if f.clock_jump_near {
-        c.push(Candidate { suspect: Suspect::ClockJump, explains_s: 5.0, strength: Strength::Strong, iface_only: false });
+        c.push(Candidate { suspect: Suspect::ClockJump, explains_s: limits::CLOCK_JUMP_MAX_S, strength: Strength::Strong, iface_only: false });
     }
     if f.power_save_on && f.role == IfaceRole::Wifi {
-        c.push(Candidate { suspect: Suspect::PowerSave, explains_s: if f.ticks <= 2 { d } else { 0.0 }, strength: Strength::Weak, iface_only: true });
+        c.push(Candidate { suspect: Suspect::PowerSave, explains_s: if f.ticks <= limits::POWER_SAVE_MAX_TICKS { d } else { 0.0 }, strength: Strength::Weak, iface_only: true });
     }
     for x in &mut c {
         x.explains_s = x.explains_s.clamp(0.0, d);
@@ -303,7 +342,8 @@ fn suspect_msg(s: Suspect, explains_s: f64) -> Msg {
 }
 
 pub fn attribute(f: &IncidentFacts) -> Finding {
-    let d = f.duration_s.max(f.tick_s.max(0.2));
+    let t = f.tick_s.max(limits::MIN_TICK_S);
+    let d = f.duration_s.max(t);
     let (cands, mut evidence) = candidates(f);
     for c in &cands {
         evidence.push(Evidence { suspect: Some(c.suspect), explains_s: c.explains_s, host: true, msg: suspect_msg(c.suspect, c.explains_s) });
@@ -334,10 +374,10 @@ pub fn attribute(f: &IncidentFacts) -> Finding {
     if f.no_ip {
         hint(NetworkCause::Dhcp, crate::msg!("a_dhcp", "The path had a link but no address (DHCP)."), &mut evidence);
     }
-    if wifi && f.signal_dbm.is_some_and(|s| s <= -75.0) {
+    if wifi && f.signal_dbm.is_some_and(|s| s <= limits::WEAK_SIGNAL_DBM) {
         hint(NetworkCause::WeakSignal, crate::msg!("a_weak_signal", "The Wi-Fi signal was weak ({dbm} dBm).", dbm = format!("{:.0}", f.signal_dbm.unwrap_or_default())), &mut evidence);
     }
-    if wifi && f.busy_pct.is_some_and(|b| b >= 70.0) {
+    if wifi && f.busy_pct.is_some_and(|b| b >= limits::BUSY_CHANNEL_PCT) {
         hint(NetworkCause::BusyChannel, crate::msg!("a_busy_channel", "The Wi-Fi channel was {pct}% busy.", pct = format!("{:.0}", f.busy_pct.unwrap_or_default())), &mut evidence);
     }
     let other_clean = f.other_failed.iter().filter(|o| !o.self_traffic).count();
@@ -394,29 +434,38 @@ pub fn attribute(f: &IncidentFacts) -> Finding {
         let flip = (confidence == Confidence::Low).then(|| crate::msg!("a_flip_unconfirmed", "Nothing independent confirms it: a second path or the router log would make this certain."));
         return Finding { attribution: Attribution::Network, confidence, host_s: 0.0, network_s: d, main_suspect: None, evidence, flip, network_causes: causes };
     };
-    let host_s = cands.iter().map(|c| c.explains_s).fold(0.0, f64::max).min(d);
-    let r = host_s / d;
+    // Only suspects that independent evidence does not contradict count towards `host_s`.
+    let ok_s = cands.iter().filter(|c| !contradicted(c)).map(|c| c.explains_s).fold(0.0, f64::max).min(d);
     let counter = contradicted(main);
+    let load_incident = counter && main.suspect == Suspect::SpeedTest;
+    // If the main suspect is contradicted, its own value still decides the grade (it is the
+    // strongest hint), and is reported only as far as it leaves the network at least one tick.
+    let host_s = if counter { ok_s.max(main.explains_s.min(d)) } else { ok_s };
+    let r = host_s / d;
 
-    let attribution = if counter {
-        if main.suspect == Suspect::SpeedTest || (main.strength >= Strength::Strong && r >= 0.1) {
+    let mut attribution = if counter {
+        if load_incident || (main.strength >= Strength::Strong && r >= limits::MIXED_RATIO) {
             Attribution::Mixed
         } else {
             Attribution::NetworkDespiteHost
         }
-    } else if r >= 0.8 {
+    } else if r >= limits::OBSERVER_RATIO {
         if main.strength >= Strength::Strong { Attribution::ObserverConfirmed } else { Attribution::ObserverLikely }
-    } else if r >= 0.1 {
+    } else if r >= limits::MIXED_RATIO {
         Attribution::Mixed
     } else {
         Attribution::NetworkDespiteHost
     };
+    let mixed_host_s = if counter && !load_incident { host_s.min((d - t).max(0.0)) } else { host_s };
+    if attribution == Attribution::Mixed && mixed_host_s <= 0.0 {
+        attribution = Attribution::NetworkDespiteHost;
+    }
     let (host_s, network_s) = match attribution {
-        Attribution::Network | Attribution::NetworkDespiteHost => (if attribution == Attribution::Network { 0.0 } else { host_s }, d),
+        Attribution::Network | Attribution::NetworkDespiteHost => (host_s, d),
         // A load incident: our speed test provoked it, but the network really failed under
         // that load, so the whole outage also counts for the network.
-        Attribution::Mixed if counter && main.suspect == Suspect::SpeedTest => (host_s, d),
-        Attribution::Mixed => (host_s, (d - host_s).max(0.0)),
+        Attribution::Mixed if load_incident => (host_s, d),
+        Attribution::Mixed => (mixed_host_s, (d - mixed_host_s).max(0.0)),
         Attribution::ObserverLikely | Attribution::ObserverConfirmed => (d, 0.0),
     };
     let flip = match attribution {
@@ -428,7 +477,21 @@ pub fn attribute(f: &IncidentFacts) -> Finding {
         Attribution::Mixed => Some(crate::msg!("a_flip_mixed", "Without the host effect the outage would still last about {s} s.", s = secs(network_s))),
         Attribution::NetworkDespiteHost | Attribution::Network => None,
     };
-    let confidence = if attribution.is_observer() { Confidence::default() } else { confidence };
+    let confidence = if attribution.is_observer() {
+        // The main suspect is not contradicted here. Strong or confirmed and covering the whole
+        // outage, with a comparable path that stayed fine: high. Strong otherwise: medium.
+        let covers = main.explains_s >= d - 1e-9;
+        let path_fine = f.comparable_paths > 0 && f.other_failed.is_empty();
+        if main.strength < Strength::Strong {
+            Confidence::Low
+        } else if covers && path_fine {
+            Confidence::High
+        } else {
+            Confidence::Medium
+        }
+    } else {
+        confidence
+    };
     let network_causes = if attribution.is_observer() { Vec::new() } else { causes };
     Finding { attribution, confidence, host_s, network_s, main_suspect: Some(main.suspect), evidence, flip, network_causes }
 }

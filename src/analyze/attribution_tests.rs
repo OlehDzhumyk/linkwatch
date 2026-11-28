@@ -357,6 +357,65 @@ fn a34_power_save_contradicted_by_channel_change() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// host_s rule and observer confidence (section 6).
+// ---------------------------------------------------------------------------------------------
+
+#[test]
+fn contradicted_suspect_never_leaves_mixed_with_zero_network() {
+    // Suspend covers the whole outage, but the router rebooted: contradicted everywhere.
+    let mut f = both_out(wifi(20));
+    f.suspend_near = true;
+    f.router_reboot_near = true;
+    let r = attribute(&f);
+    assert_eq!(r.attribution, Attribution::Mixed, "{r:#?}");
+    assert!(r.network_s >= 1.0 - TOL, "{r:#?}");
+    assert!(near(r.host_s, 19.0), "{r:#?}");
+}
+
+#[test]
+fn host_s_ignores_contradicted_suspects() {
+    // Scan (5 s) is contradicted by the AP; a strong overrun (15 s) is not.
+    let mut f = eth_ok(wifi(30));
+    f.scan_ticks = 3;
+    f.overrun_ticks = 15;
+    f.ap_disconnect = true;
+    let r = attribute(&f);
+    assert_eq!(r.attribution, Attribution::Mixed, "{r:#?}");
+    assert!(near(r.host_s, 15.0) && near(r.network_s, 15.0), "{r:#?}");
+}
+
+#[test]
+fn observer_confidence_high_strong_covering_comparable_fine() {
+    let mut f = eth_ok(wifi(4));
+    f.scan_ticks = 3;
+    let r = attribute(&f);
+    assert_eq!(r.attribution, Attribution::ObserverConfirmed);
+    assert_eq!(r.confidence, Confidence::High, "{r:#?}");
+}
+
+#[test]
+fn observer_confidence_medium_strong_without_comparable_path() {
+    let mut f = wifi(4);
+    f.scan_ticks = 3;
+    let r = attribute(&f);
+    assert_eq!(r.attribution, Attribution::ObserverConfirmed);
+    assert_eq!(r.confidence, Confidence::Medium, "{r:#?}");
+    // Strong but not covering the whole outage (overrun 25 of 30): medium too.
+    let mut f = eth_ok(wifi(30));
+    f.overrun_ticks = 25;
+    assert_eq!(attribute(&f).confidence, Confidence::Medium);
+}
+
+#[test]
+fn observer_confidence_low_for_weak_suspect() {
+    let mut f = eth_ok(wifi(4));
+    f.throttled_near = true;
+    let r = attribute(&f);
+    assert_eq!(r.attribution, Attribution::ObserverLikely);
+    assert_eq!(r.confidence, Confidence::Low, "{r:#?}");
+}
+
+// ---------------------------------------------------------------------------------------------
 // End-to-end through the Analyzer.
 // ---------------------------------------------------------------------------------------------
 
@@ -422,7 +481,7 @@ fn a10_e2e_driver_reset_after_start() {
         100..140,
         0..0,
         PathState::LanDown,
-        vec![(120, Record::Event(EventKind::HostAlert { alert: "driver_reset".into(), detail: "wlo1: firmware restarted".into() }))],
+        vec![(120, Record::Event(EventKind::HostAlert { alert: "driver_reset".into(), detail: "wlo1: kernel ifindex changed 3 -> 7".into() }))],
     );
     let f = &ep(&r, "wlo1").finding;
     assert_eq!(f.attribution, Attribution::Network, "{f:#?}");
