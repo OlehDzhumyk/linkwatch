@@ -81,6 +81,7 @@ impl OpenEp {
         let open = std::mem::take(self);
         let end_base = lb.max(st);
         let state = dominant_state(&open.states);
+        let onset_state = open.states.first().map_or(PathState::Unknown, |(st, _)| *st);
         let dom_band = open.bands.iter().max_by_key(|(_, c)| **c).map(|(k, _)| k.clone());
         let context = open_context(&open);
         let ep = Episode {
@@ -91,6 +92,7 @@ impl OpenEp {
             duration_s: (end_base - st).num_milliseconds().max(0) as f64 / 1000.0 + tick_s,
             ticks: open.ticks,
             state,
+            onset_state,
             cause: None,
             origin: IncidentOrigin::Unknown,
             band: dom_band,
@@ -215,6 +217,23 @@ mod tests {
         assert_eq!(dominant_state(&[(PathState::WanDown, 3), (PathState::LanDown, 1)]), PathState::LanDown);
         assert_eq!(dominant_state(&[(PathState::DnsDown, 5), (PathState::IspDown, 5)]), PathState::IspDown, "tie goes to the nearer failure");
         assert_eq!(dominant_state(&[]), PathState::Unknown);
+    }
+
+    #[test]
+    fn onset_state_is_the_first_bad_state_not_the_dominant_one() {
+        let mut o = OpenEp::default();
+        // The path starts as WAN down, then the router stops answering for most of the episode.
+        for (s, st) in [(0, PathState::WanDown), (1, PathState::LanDown), (2, PathState::LanDown), (3, PathState::LanDown), (4, PathState::WanDown)] {
+            o.add_bad_tick(at(s), tick(st));
+        }
+        let (ep, _) = o.close("eth0", Some(IfaceRole::Ethernet), Duration::seconds(1), 1.0).expect("episode");
+        assert_eq!((ep.onset_state, ep.state), (PathState::WanDown, PathState::LanDown));
+        // An episode that never changes starts as it ends.
+        let mut o = OpenEp::default();
+        o.add_bad_tick(at(0), tick(PathState::IspDown));
+        o.add_bad_tick(at(1), tick(PathState::IspDown));
+        let (ep, _) = o.close("eth0", None, Duration::seconds(1), 1.0).expect("episode");
+        assert_eq!((ep.onset_state, ep.state), (PathState::IspDown, PathState::IspDown));
     }
 
     #[test]

@@ -46,6 +46,7 @@ fn mk_ep(iface: &str, role: IfaceRole, start: DateTime<Utc>, secs: i64, state: P
         duration_s: secs as f64,
         ticks: secs as u32,
         state,
+        onset_state: state,
         cause: Some(cause),
         origin,
         band: (role == IfaceRole::Wifi).then(|| "5 GHz".into()),

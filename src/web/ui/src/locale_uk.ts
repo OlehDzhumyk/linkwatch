@@ -402,6 +402,7 @@ export const UK: Record<MsgKey, string> = {
   "report.attr.observer_likely": "Ймовірно спостерігач",
   "report.attr.observer_confirmed": "Спостерігач підтверджений",
   "report.attr.inconclusive": "Невизначено: умова приховує роутер і лінію",
+  "report.onset": "почався як «{state}»",
   "report.attr.split": "хост {host}, мережа {net}",
   "report.conf.low": "Низька певність",
   "report.conf.medium": "Середня певність",

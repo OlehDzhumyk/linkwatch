@@ -103,8 +103,12 @@ pub struct Episode {
     pub end: DateTime<Utc>,
     pub duration_s: f64,
     pub ticks: u32,
-    /// Most frequent bad state during the episode.
+    /// The state that names the episode: the failure nearest to the user among the bad states
+    /// with a real share of the ticks (see `stages::episodes::dominant_state`).
     pub state: PathState,
+    /// The first bad state of the episode. It differs from `state` when the failure moved, for
+    /// example a path that started as `WanDown` and ended as `LanDown`.
+    pub onset_state: PathState,
     /// Filled by cross-path analysis.
     pub cause: Option<Verdict>,
     #[serde(default)]

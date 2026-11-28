@@ -27,6 +27,12 @@ each item.
   `mixed`. Episodes with `observer_likely`, `observer_confirmed` or `inconclusive` never set the
   headline layer (before, only origin `observer` and load-provoked episodes were skipped).
   `expect.json` of the golden sessions now also holds the headline.
+- **Onset state:** `Episode` has the new field `onset_state`, the first bad state of the
+  episode. It differs from `state` (the state that names the episode) when the failure moved,
+  for example `WanDown` first and then `LanDown`. The Markdown outage table shows
+  `LanDown (started as WanDown)` and the web incident row shows a "started as …" badge, only
+  when the two differ. The web report API has the same field. `expect.json` of the golden
+  sessions holds it too.
 
 ## [0.12.0] - 2026-11-28
 

@@ -195,6 +195,7 @@ fn periodic_pattern_found() {
             duration_s: 5.0,
             ticks: 5,
             state: PathState::LanDown,
+            onset_state: PathState::LanDown,
             cause: None,
             origin: IncidentOrigin::Network,
             band: None,
@@ -1028,4 +1029,43 @@ fn degraded_during_the_monitors_own_load_is_not_counted() {
     let r = one_path_report(3600, |i| (1000..1400).contains(&i), |i| (1000..1400).contains(&i));
     assert!(degraded_msg(&r).is_none(), "{:?}", r.findings_msg);
     assert_eq!(r.ifaces[0].degraded_ticks, 0);
+}
+
+// ---------- onset state (R8) ----------
+
+/// Wi-Fi fails as WAN down for 2 s, then the router stops answering for 8 s (cable fine).
+fn moving_failure_report() -> Report {
+    let t0 = DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+    let mut a = Analyzer::new(Opts::default());
+    for i in 0..60 {
+        let w = match i {
+            20..22 => PathState::WanDown,
+            22..30 => PathState::LanDown,
+            _ => PathState::Ok,
+        };
+        a.push(&env(t0 + Duration::seconds(i), samp("wlo1", IfaceRole::Wifi, w, 3.0)));
+        a.push(&env(t0 + Duration::seconds(i), samp("eth0", IfaceRole::Ethernet, PathState::Ok, 1.0)));
+    }
+    a.finish(&[])
+}
+
+#[test]
+fn episode_keeps_the_first_bad_state_next_to_the_naming_state() {
+    let r = moving_failure_report();
+    assert_eq!(r.episodes.len(), 1, "{:?}", r.episodes);
+    assert_eq!((r.episodes[0].onset_state, r.episodes[0].state), (PathState::WanDown, PathState::LanDown));
+    let json = serde_json::to_value(&r.episodes[0]).unwrap();
+    assert_eq!(json["onset_state"], "wan_down");
+    assert_eq!(json["state"], "lan_down");
+}
+
+#[test]
+fn markdown_shows_the_onset_only_when_it_differs_from_the_state() {
+    let mut r = moving_failure_report();
+    let md = to_markdown(&r);
+    assert!(md.contains("LanDown (started as WanDown)"), "{md}");
+    r.episodes[0].onset_state = r.episodes[0].state;
+    let md = to_markdown(&r);
+    assert!(!md.contains("started as"), "{md}");
+    assert!(md.contains("| LanDown |"), "{md}");
 }

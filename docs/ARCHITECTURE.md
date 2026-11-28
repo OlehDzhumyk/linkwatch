@@ -187,7 +187,7 @@ Rules for every step:
 | R5 | `check/` module merge. | S | — |
 | R6 | `router/` module and cargo features for extensions (§3.5). | M | — |
 | R7 | Split `web/api.rs` by tab. | M | R1, R2 |
-| R8 | Behaviour change: mixed and degraded verdicts (§4.4), onset in episodes (§4.5). | M | R3, R4 |
+| R8 | Behaviour change: mixed and degraded verdicts (§4.4), onset in episodes (§4.5). **Done:** `Verdict::Mixed`, the `f_degraded` finding, the headline counts only network-caused attributions, `Episode::onset_state`. | M | R3, R4 |
 | R9 | Analyzer checkpoint and incremental live report; measure a 7-day session on a Pi. | L | R1, R3 |
 | R10 | Behaviour change: IPv6 probes (`IpAddr` in model and probes; per-family paths). | L | R3 |
 | R11 | Replace `chrono` with `jiff` (ROADMAP §5). | M | R3 |

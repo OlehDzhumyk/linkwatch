@@ -48,6 +48,7 @@ pub(super) mod fixtures {
             duration_s: dur_s as f64,
             ticks: dur_s as u32,
             state,
+            onset_state: state,
             cause: None,
             origin: IncidentOrigin::Unknown,
             band: None,

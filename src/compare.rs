@@ -622,6 +622,7 @@ mod tests {
             duration_s: secs as f64,
             ticks: secs as u32,
             state: PathState::LanDown,
+            onset_state: PathState::LanDown,
             cause: Some(Verdict::SinglePath),
             origin,
             band: band.map(String::from),

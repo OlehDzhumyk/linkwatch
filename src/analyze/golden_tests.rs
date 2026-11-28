@@ -45,6 +45,7 @@ fn summarize(r: &Report) -> Value {
                 "duration_s": e.duration_s.round() as i64,
                 "end": e.end.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
                 "state": to_json(&e.state),
+                "onset_state": to_json(&e.onset_state),
                 "cause": to_json(&e.cause),
                 "origin": to_json(&e.origin),
                 "attribution": to_json(&e.finding.attribution),

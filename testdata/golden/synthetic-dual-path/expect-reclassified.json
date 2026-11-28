@@ -12,6 +12,7 @@
       "duration_s": 10,
       "end": "2026-01-15T10:01:50Z",
       "iface": "wlo1",
+      "onset_state": "lan_down",
       "origin": "network",
       "start": "2026-01-15T10:01:40Z",
       "state": "lan_down"
@@ -24,6 +25,7 @@
       "duration_s": 20,
       "end": "2026-01-15T10:05:20Z",
       "iface": "wlo1",
+      "onset_state": "wan_down",
       "origin": "network",
       "start": "2026-01-15T10:05:00Z",
       "state": "wan_down"
@@ -36,6 +38,7 @@
       "duration_s": 20,
       "end": "2026-01-15T10:05:20Z",
       "iface": "eth0",
+      "onset_state": "wan_down",
       "origin": "network",
       "start": "2026-01-15T10:05:00Z",
       "state": "wan_down"
@@ -48,6 +51,7 @@
       "duration_s": 7,
       "end": "2026-01-15T10:07:42Z",
       "iface": "wlo1",
+      "onset_state": "lan_down",
       "origin": "observer",
       "start": "2026-01-15T10:07:35Z",
       "state": "lan_down"

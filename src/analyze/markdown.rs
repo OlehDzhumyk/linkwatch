@@ -48,11 +48,11 @@ pub fn to_markdown(r: &Report) -> String {
     for e in r.episodes.iter().filter(|e| e.duration_s > r.micro_max_s).take(200) {
         let _ = writeln!(
             s,
-            "| {} | {} | {:.0}s | {:?} | {:?} | {:?} | {} | {} |",
+            "| {} | {} | {:.0}s | {} | {:?} | {:?} | {} | {} |",
             lt(e.start),
             e.iface,
             e.duration_s,
-            e.state,
+            state_cell(e),
             e.cause.unwrap_or(Verdict::Unknown),
             e.origin,
             attribution_cell(&e.finding),
@@ -155,6 +155,16 @@ pub fn to_markdown(r: &Report) -> String {
 
 fn snake<T: serde::Serialize>(v: &T) -> String {
     serde_json::to_value(v).ok().and_then(|x| x.as_str().map(str::to_owned)).unwrap_or_default()
+}
+
+/// The state cell of an outage row: `IspDown`, or `IspDown (started as LanDown)` when the first
+/// bad state of the episode differs from the state that names it.
+fn state_cell(e: &Episode) -> String {
+    if e.onset_state == e.state || e.onset_state == PathState::Unknown {
+        format!("{:?}", e.state)
+    } else {
+        format!("{:?} (started as {:?})", e.state, e.onset_state)
+    }
 }
 
 /// One table cell: `mixed (host 5 s)`, `observer_confirmed`, `network (high)`, plus the first network cause.

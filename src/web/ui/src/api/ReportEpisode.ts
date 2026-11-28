@@ -6,7 +6,11 @@ import type { Msg } from "./Msg.js";
 import type { PathState } from "./PathState.js";
 import type { Verdict } from "./Verdict.js";
 
-export type ReportEpisode = { iface: string, role: IfaceRole, start: string, end: string, duration_s: number, state: PathState, cause: Verdict | null, origin: IncidentOrigin, band: string | null, speedtest_active: boolean, 
+export type ReportEpisode = { iface: string, role: IfaceRole, start: string, end: string, duration_s: number, state: PathState, 
+/**
+ * The first bad state of the episode (differs from `state` when the failure moved).
+ */
+onset_state: PathState, cause: Verdict | null, origin: IncidentOrigin, band: string | null, speedtest_active: boolean, 
 /**
  * Context lines (translatable; `text` is English).
  */

@@ -20,6 +20,7 @@ fn ep(cause: Option<Verdict>, secs: i64, origin: IncidentOrigin, speedtest: bool
         duration_s: secs as f64,
         ticks: secs as u32,
         state: PathState::IspDown,
+        onset_state: PathState::IspDown,
         cause,
         origin,
         band: None,

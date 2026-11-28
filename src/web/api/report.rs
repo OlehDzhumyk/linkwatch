@@ -67,6 +67,8 @@ pub(crate) struct ReportEpisode {
     pub end: DateTime<Utc>,
     pub duration_s: f64,
     pub state: PathState,
+    /// The first bad state of the episode (differs from `state` when the failure moved).
+    pub onset_state: PathState,
     pub cause: Option<Verdict>,
     pub origin: IncidentOrigin,
     pub band: Option<String>,
@@ -275,6 +277,7 @@ fn analyze_session_dir(dir: &Path, id: String, live_verdict: Option<Verdict>) ->
             end: ep.end,
             duration_s: ep.duration_s,
             state: ep.state,
+            onset_state: ep.onset_state,
             cause: ep.cause,
             origin: ep.origin,
             band: ep.band.clone(),

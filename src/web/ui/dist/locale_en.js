@@ -373,6 +373,7 @@ export const EN = {
     "report.attr.observer_likely": "Observer likely",
     "report.attr.observer_confirmed": "Observer confirmed",
     "report.attr.inconclusive": "Inconclusive: a condition hides the router and the line",
+    "report.onset": "started as “{state}”",
     "report.attr.split": "host {host}, network {net}",
     "report.conf.low": "Low confidence",
     "report.conf.medium": "Medium confidence",

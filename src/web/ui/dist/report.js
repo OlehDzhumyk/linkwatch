@@ -179,6 +179,11 @@ export function episodeRow(ep, withContext = true, live = false) {
             title: t(CONF_KEY[fin.confidence]),
         })
         : null;
+    // The first bad state, when the failure moved (not for old reports without the field).
+    const onset = ep.onset_state;
+    const onsetBadge = onset && onset !== ep.state && onset !== "unknown"
+        ? el("span", { class: "badge", text: t("report.onset", { state: stateLabel(onset)[0] }) })
+        : null;
     const ctx = withContext ? ep.context.slice(0, 4).map((c) => el("span", { class: "inc-ctx", text: tMsg(c) })) : [];
     if (withContext && fin) {
         const cause = fin.network_causes?.[0];
@@ -195,7 +200,7 @@ export function episodeRow(ep, withContext = true, live = false) {
         type: "button",
         class: "inc-item " + cTone,
         onclick: () => bus.dispatchEvent(new CustomEvent(live ? "focus-live-time" : "focus-time", { detail: ep.start })),
-    }, el("div", { class: "inc-top" }, el("span", { class: "inc-meta" }, el("span", { class: "mono small", text: fmtTime(ep.start) }), el("span", { class: "mono small inc-iface", text: ep.iface }), ep.band ? el("span", { class: "badge", text: ep.band }) : null, ep.speedtest_active ? el("span", { class: "badge badge-warn", text: t("report.load_tag") }) : null, attrBadge, el("strong", { class: "small", text: fmtDur(ep.duration_s) })), el("span", { class: "pill small " + cTone, text: cLbl })), ctx.length ? el("div", { class: "inc-ctxs" }, ...ctx) : null));
+    }, el("div", { class: "inc-top" }, el("span", { class: "inc-meta" }, el("span", { class: "mono small", text: fmtTime(ep.start) }), el("span", { class: "mono small inc-iface", text: ep.iface }), ep.band ? el("span", { class: "badge", text: ep.band }) : null, ep.speedtest_active ? el("span", { class: "badge badge-warn", text: t("report.load_tag") }) : null, attrBadge, onsetBadge, el("strong", { class: "small", text: fmtDur(ep.duration_s) })), el("span", { class: "pill small " + cTone, text: cLbl })), ctx.length ? el("div", { class: "inc-ctxs" }, ...ctx) : null));
 }
 function renderIncidents(rep) {
     const list = byId("incidents");
