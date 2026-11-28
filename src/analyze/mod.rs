@@ -17,6 +17,7 @@ mod detect;
 mod engine;
 mod markdown;
 pub mod reclassify;
+mod stages;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

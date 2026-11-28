@@ -5,6 +5,8 @@ use crate::config::Classify as Cfg;
 use crate::model::{IfaceRole, PathState, ProbeResult, Sample, Verdict};
 use std::collections::VecDeque;
 
+pub mod limits;
+
 /// Instantaneous state from one sample, before windowing and debouncing.
 /// `last_dns` is the most recent DNS result (DNS runs less often than ticks).
 ///
@@ -117,7 +119,7 @@ impl PathClassifier {
     fn degraded(&self) -> bool {
         let obs: Vec<&Obs> = self.window.iter().filter(|o| o.counted).collect();
         // Need a minimum of evidence before calling a path degraded.
-        if obs.len() < (self.cfg.window_ticks as usize / 2).max(5) {
+        if obs.len() < (self.cfg.window_ticks as usize / limits::EVIDENCE_WINDOW_DIVISOR).max(limits::MIN_EVIDENCE_TICKS) {
             return false;
         }
         let n = obs.len() as f64;
@@ -125,10 +127,10 @@ impl PathClassifier {
         let gw_answers = obs.iter().any(|o| !o.gw_fail);
         let gw_loss = if gw_answers { obs.iter().filter(|o| o.gw_fail).count() as f64 / n * 100.0 } else { 0.0 };
         let net_loss = obs.iter().filter(|o| o.net_fail).count() as f64 / n * 100.0;
-        // net_fail counts partial loss (one of three targets). Use half weight for it.
+        // net_fail counts partial loss (one of three targets). Use a reduced weight for it.
         // One lost probe in a window is noise, whatever the percentage says.
         let gw_lost = obs.iter().filter(|o| o.gw_fail).count();
-        if (gw_lost >= 2 && gw_loss > self.cfg.degraded_loss_pct) || net_loss / 2.0 > self.cfg.degraded_loss_pct {
+        if (gw_lost >= limits::MIN_LOST_GW_PROBES && gw_loss > self.cfg.degraded_loss_pct) || net_loss * limits::PARTIAL_LOSS_WEIGHT > self.cfg.degraded_loss_pct {
             return true;
         }
         let med = |v: Vec<f64>| median(v);
@@ -186,7 +188,7 @@ fn is_bad(s: PathState) -> bool {
 pub fn verdict(states: &[(IfaceRole, PathState)], isp_known: bool) -> Verdict {
     let no_link = |s: PathState| matches!(s, PathState::LinkDown | PathState::NoIp);
     // Every path lost link at the same time (more than one path): the router itself.
-    if states.len() > 1 && states.iter().all(|(_, s)| no_link(*s)) {
+    if states.len() >= limits::MIN_COMPARABLE_PATHS && states.iter().all(|(_, s)| no_link(*s)) {
         return Verdict::RouterProblem;
     }
     let known: Vec<_> = states
@@ -200,7 +202,7 @@ pub fn verdict(states: &[(IfaceRole, PathState)], isp_known: bool) -> Verdict {
     if bad.is_empty() {
         return Verdict::AllOk;
     }
-    if known.len() == 1 {
+    if known.len() < limits::MIN_COMPARABLE_PATHS {
         return Verdict::SinglePath;
     }
     if bad.len() < known.len() {
@@ -439,6 +441,61 @@ mod tests {
         s.speedtest_active = true;
         c.feed(&s, true, None, sec(13));
         assert_eq!(c.state(), PathState::LanDown);
+    }
+
+    #[test]
+    fn partial_internet_loss_weighs_half() {
+        let sec = |n| t0() + chrono::Duration::seconds(n);
+        // One of three internet targets lost on every tick: net loss 100 %, weighed 50 %.
+        let partial = || {
+            let mut s = sample(true, true, 2);
+            s.net.rtt_ms = Some(15.0);
+            s
+        };
+        let state_with = |degraded_loss_pct: f64| {
+            let mut c = PathClassifier::new(Cfg { degraded_loss_pct, ..cfg() }, t0());
+            for i in 0..10 {
+                c.feed(&partial(), true, None, sec(i));
+            }
+            c.state()
+        };
+        assert_eq!(state_with(49.0), PathState::Degraded);
+        assert_eq!(state_with(50.0), PathState::Ok, "50 % weighed loss is not above a 50 % limit");
+    }
+
+    #[test]
+    fn a_window_with_too_few_counted_ticks_is_never_degraded() {
+        let sec = |n| t0() + chrono::Duration::seconds(n);
+        // Window of 4 ticks: below the minimum evidence, however bad the router looks.
+        let mut c = PathClassifier::new(Cfg { window_ticks: 4, ..cfg() }, t0());
+        for i in 0..8 {
+            let mut s = sample(true, true, 3);
+            s.gw = Some(ProbeResult::ok(400.0));
+            c.feed(&s, true, None, sec(i));
+        }
+        assert_eq!(c.state(), PathState::Ok);
+        // The same ticks in a window of the minimum size are degraded.
+        let mut c = PathClassifier::new(Cfg { window_ticks: limits::MIN_EVIDENCE_TICKS as u32, ..cfg() }, t0());
+        for i in 0..8 {
+            let mut s = sample(true, true, 3);
+            s.gw = Some(ProbeResult::ok(400.0));
+            c.feed(&s, true, None, sec(i));
+        }
+        assert_eq!(c.state(), PathState::Degraded);
+    }
+
+    #[test]
+    fn two_lost_router_probes_are_enough_for_router_loss_but_one_is_not() {
+        let sec = |n| t0() + chrono::Duration::seconds(n);
+        let run = |lost: usize| {
+            let mut c = PathClassifier::new(cfg(), t0());
+            for i in 0..10usize {
+                c.feed(&sample(i >= lost, true, 3), true, None, sec(i as i64));
+            }
+            c.state()
+        };
+        assert_eq!(run(limits::MIN_LOST_GW_PROBES - 1), PathState::Ok);
+        assert_eq!(run(limits::MIN_LOST_GW_PROBES), PathState::Degraded);
     }
 
     #[test]
