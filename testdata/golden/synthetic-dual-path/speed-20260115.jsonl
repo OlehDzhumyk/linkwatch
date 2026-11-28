@@ -1,0 +1,1 @@
+{"v":1,"run":"synthetic-run","seq":1202,"ts":"2026-01-15T10:07:50.000Z","mono_ns":470000000000,"type":"speed","iface":"wlo1","url":"https://speed.example.com/file","bytes":5000000,"secs":20.0,"mbps":2.0}

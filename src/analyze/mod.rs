@@ -22,6 +22,8 @@ mod tests;
 mod attribution_tests;
 #[cfg(test)]
 mod perf_tests;
+#[cfg(test)]
+mod golden_tests;
 
 pub use engine::Analyzer;
 pub use markdown::to_markdown;

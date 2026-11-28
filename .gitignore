@@ -2,3 +2,4 @@ target/
 .claude/
 .idea/
 node_modules/
+testdata/golden/local-*/

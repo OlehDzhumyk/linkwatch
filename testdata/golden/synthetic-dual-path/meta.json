@@ -1,0 +1,12 @@
+{
+  "v": 1,
+  "session": "synthetic-dual-path",
+  "started": "2026-01-15T10:00:00.000Z",
+  "host": "host-synthetic",
+  "version": "0.0.0-synthetic",
+  "config": {
+    "intervals": {
+      "probe_ms": 1000
+    }
+  }
+}
