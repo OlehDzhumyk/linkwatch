@@ -2,6 +2,29 @@
 
 All notable changes to `linkwatch` are documented in this file.
 
+## [0.9.0] - 2026-11-28
+
+### Added
+- **Masking (phase 1):** an incident that only one Wi-Fi path saw, with a very busy channel or a
+  weak signal and nothing independent, is `inconclusive` for the router and the line
+  (`Finding.blinded`); an unsynchronized clock stops router-log matches from counting as
+  evidence. See docs/INCIDENT-ATTRIBUTION.md section 10 (M1, M2, M3, M5, M11).
+- **Golden tests:** `testdata/golden/<session>/expect.json` is compared with a fresh analysis;
+  `scripts/make-fixture.py` slices and redacts a real session (self-check for MACs, private
+  IPs, SSIDs, ids); real fixtures stay local in `testdata/golden/local-*`.
+- `[classify] debounce_s` / `window_s`: the classifier is time-based, so profiles with other
+  probe intervals keep the same meaning. The tick keys still work and are deprecated.
+- A week-long synthetic session benchmark (`perf_tests`, ignored by default).
+
+### Fixed
+- A cable unplugged long ago no longer turns a later Wi-Fi drop into `router_problem`
+  (a wired path counts only within 15 s of losing link).
+- The ISP hop search backs off to 10 min while no hop answers.
+
+### Changed
+- The live web report is rebuilt at most every 5 min; its verdict headline always follows the
+  live verdict.
+
 ## [0.8.0] - 2026-11-28
 
 Fixes from an independent review. Verdicts first, no new features.
