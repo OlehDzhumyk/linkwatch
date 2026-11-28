@@ -245,7 +245,7 @@ pub(crate) fn router(state: AppState) -> Router {
             "/index.html",
             get(|| async { asset("text/html; charset=utf-8", INDEX_HTML) }),
         )
-        .route("/js/:name", get(ui_module))
+        .route("/js/{name}", get(ui_module))
         .route(
             "/style.css",
             get(|| async { asset("text/css; charset=utf-8", STYLE_CSS) }),
