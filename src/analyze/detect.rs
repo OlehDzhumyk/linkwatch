@@ -2,6 +2,7 @@
 
 use super::*;
 use super::engine::*;
+use super::limits;
 
 /// Minutes whose value deviates more than `z` robust sigmas, merged into intervals.
 pub(super) fn robust_anomalies(iface: &str, metric: &str, series: &[(DateTime<Utc>, f64)], z: f64, sign: f64) -> Vec<Anomaly> {
@@ -71,6 +72,18 @@ pub(super) fn patterns(eps: &[Episode], micro: f64) -> Vec<Msg> {
     out
 }
 
+/// Whether the `Degraded` time of one interface is long enough to report: an unbroken run of at
+/// least [`limits::DEGRADED_RUN_S`], or a share of at least [`limits::DEGRADED_SHARE_PCT`] of its
+/// ticks that adds up to at least [`limits::DEGRADED_MIN_S`].
+pub(super) fn degraded_is_finding(degraded_ticks: u64, ticks: u64, tick_s: f64, longest_s: f64) -> bool {
+    if degraded_ticks == 0 || ticks == 0 {
+        return false;
+    }
+    let share_pct = 100.0 * degraded_ticks as f64 / ticks as f64;
+    let total_s = degraded_ticks as f64 * tick_s;
+    longest_s >= limits::DEGRADED_RUN_S || (share_pct >= limits::DEGRADED_SHARE_PCT && total_s >= limits::DEGRADED_MIN_S)
+}
+
 pub(super) fn findings(r: &Report) -> Vec<Msg> {
     use crate::msg;
     let f1 = |v: Option<f64>| v.map_or("-".to_string(), |v| format!("{v:.1}"));
@@ -114,6 +127,13 @@ pub(super) fn findings(r: &Report) -> Vec<Msg> {
             }
         if i.stalls > 0 {
             f.push(msg!("f_stalls", "{iface}: {n} stalls (path answered, but very late: router > 200 ms or internet > 500 ms) — felt as freezes", iface = iface, n = i.stalls));
+        }
+        if degraded_is_finding(i.degraded_ticks, i.ticks, r.tick_s, i.degraded_longest_s) {
+            let total_s = i.degraded_ticks as f64 * r.tick_s;
+            f.push(msg!("f_degraded",
+                "{iface}: degraded (loss or high latency, but not down) for {pct}% of the time ({total} min in total, longest run {run} min) — a quality problem, not an outage",
+                iface = iface, pct = format!("{:.0}", 100.0 * i.degraded_ticks as f64 / i.ticks.max(1) as f64),
+                total = format!("{:.0}", total_s / 60.0), run = format!("{:.0}", i.degraded_longest_s / 60.0)));
         }
         if i.reconnects > 0 {
             f.push(msg!("f_reconnects", "{iface}: re-associated to the same access point {n} times (short disconnects)", iface = iface, n = i.reconnects));

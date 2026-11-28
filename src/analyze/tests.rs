@@ -916,3 +916,116 @@ fn short_blip_of_a_nearer_state_does_not_rename_a_long_outage() {
     assert_eq!(r.episodes.len(), 1, "{:#?}", r.episodes);
     assert_eq!(r.episodes[0].state, PathState::WanDown);
 }
+
+// ---------- long Degraded is a finding (R8) ----------
+
+/// One path, `n` ticks of one second; `degraded(i)` says whether tick `i` is `Degraded`.
+fn one_path_report(n: i64, degraded: impl Fn(i64) -> bool, own_load: impl Fn(i64) -> bool) -> Report {
+    let t0 = DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+    let mut a = Analyzer::new(Opts::default());
+    for i in 0..n {
+        let st = if degraded(i) { PathState::Degraded } else { PathState::Ok };
+        let mut rec = samp("wlo1", IfaceRole::Wifi, st, 3.0);
+        if let Record::Sample(s) = &mut rec {
+            s.speedtest_active = own_load(i);
+        }
+        a.push(&env(t0 + Duration::seconds(i), rec));
+    }
+    a.finish(&[])
+}
+
+fn degraded_msg(r: &Report) -> Option<&Msg> {
+    r.findings_msg.iter().find(|m| m.code == "f_degraded")
+}
+
+#[test]
+fn degraded_thresholds_cover_run_and_share() {
+    use super::limits::*;
+    let t = 1.0;
+    // Nothing degraded, or no ticks: never a finding.
+    assert!(!degraded_is_finding(0, 1000, t, 0.0));
+    assert!(!degraded_is_finding(10, 0, t, 10.0));
+    // The run rule alone: five unbroken minutes in a very long session.
+    assert!(degraded_is_finding(300, 100_000, t, DEGRADED_RUN_S));
+    assert!(!degraded_is_finding(299, 100_000, t, DEGRADED_RUN_S - 1.0));
+    // The share rule: 5 % of the ticks and at least one minute in total.
+    assert!(degraded_is_finding(100, 2000, t, 20.0));
+    assert!(!degraded_is_finding(99, 2000, t, 20.0), "4.95 % is below the share");
+    assert!(!degraded_is_finding(5, 100, t, 5.0), "5 % of a short session is only 5 s");
+    assert!(degraded_is_finding(60, 1000, t, 20.0), "6 % and one minute");
+    // The tick length counts: 12 ticks of 5 s are one minute.
+    assert!(degraded_is_finding(12, 100, 5.0, 10.0));
+}
+
+#[test]
+fn degraded_run_tracking_breaks_on_a_good_tick_and_on_a_gap() {
+    let t0 = DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+    let tick = Duration::seconds(1);
+    let mut d = DegradedAcc::default();
+    for i in 0..10 {
+        d.feed(t0 + Duration::seconds(i), true, 5, tick);
+    }
+    assert_eq!((d.ticks, d.longest_s), (10, 10.0));
+    d.feed(t0 + Duration::seconds(10), false, 5, tick);
+    for i in 11..14 {
+        d.feed(t0 + Duration::seconds(i), true, 5, tick);
+    }
+    assert_eq!((d.ticks, d.longest_s), (13, 10.0), "the good tick ended the first run");
+    // A gap longer than the merge gap starts a new run even without a good tick.
+    for i in 100..105 {
+        d.feed(t0 + Duration::seconds(i), true, 5, tick);
+    }
+    assert_eq!(d.longest_s, 10.0);
+    d.feed(t0 + Duration::seconds(105), true, 5, tick);
+    for i in 106..120 {
+        d.feed(t0 + Duration::seconds(i), true, 5, tick);
+    }
+    assert_eq!(d.longest_s, 20.0, "run 100..120");
+}
+
+#[test]
+fn a_long_degraded_run_is_a_finding_and_not_an_incident() {
+    // 400 s of Degraded in one hour: 11 % of the ticks and a run above five minutes.
+    let r = one_path_report(3600, |i| (1000..1400).contains(&i), |_| false);
+    let m = degraded_msg(&r).unwrap_or_else(|| panic!("{:?}", r.findings_msg));
+    assert_eq!(m.args.get("pct").map(String::as_str), Some("11"));
+    assert_eq!(m.args.get("total").map(String::as_str), Some("7"));
+    assert_eq!(m.args.get("run").map(String::as_str), Some("7"));
+    assert!(r.findings.iter().any(|f| f.contains("degraded") && f.contains("not an outage")));
+    // It is not an episode: no incident, no cause, availability stays at 100 %.
+    assert!(r.episodes.is_empty(), "{:?}", r.episodes);
+    assert_eq!((r.network_incidents, r.observer_incidents, r.load_incidents), (0, 0, 0));
+    assert!(r.incidents.is_empty());
+    assert_eq!(r.ifaces[0].availability_pct, 100.0);
+    assert_eq!((r.ifaces[0].degraded_ticks, r.ifaces[0].degraded_longest_s), (400, 400.0));
+}
+
+#[test]
+fn a_high_share_of_short_degraded_runs_is_a_finding() {
+    // Ten runs of 20 s in one hour: no run reaches five minutes, but 5.6 % of the ticks.
+    let r = one_path_report(3600, |i| i % 360 < 20, |_| false);
+    assert!(degraded_msg(&r).is_some(), "{:?}", r.findings_msg);
+    assert!(r.ifaces[0].degraded_longest_s <= 20.0);
+}
+
+#[test]
+fn one_five_minute_run_in_a_long_session_is_a_finding() {
+    let r = one_path_report(36_000, |i| (5000..5300).contains(&i), |_| false);
+    assert!(degraded_msg(&r).is_some(), "{:?}", r.findings_msg);
+}
+
+#[test]
+fn a_short_degraded_blip_is_not_a_finding() {
+    let r = one_path_report(3600, |i| (1000..1030).contains(&i), |_| false);
+    assert!(degraded_msg(&r).is_none(), "{:?}", r.findings_msg);
+    // The ticks are still counted in the report.
+    assert_eq!(r.ifaces[0].degraded_ticks, 30);
+}
+
+#[test]
+fn degraded_during_the_monitors_own_load_is_not_counted() {
+    // A speed test saturates the line: latency rises by design.
+    let r = one_path_report(3600, |i| (1000..1400).contains(&i), |i| (1000..1400).contains(&i));
+    assert!(degraded_msg(&r).is_none(), "{:?}", r.findings_msg);
+    assert_eq!(r.ifaces[0].degraded_ticks, 0);
+}

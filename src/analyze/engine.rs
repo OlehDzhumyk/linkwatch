@@ -32,6 +32,33 @@ pub(super) struct PrevWifiCounters {
     pub(super) beacon_loss: Option<u32>,
 }
 
+/// `Degraded` ticks of one interface and the longest unbroken run of them.
+#[derive(Default)]
+pub(super) struct DegradedAcc {
+    pub(super) ticks: u64,
+    /// First and last tick of the open run.
+    run: Option<(DateTime<Utc>, DateTime<Utc>)>,
+    pub(super) longest_s: f64,
+}
+
+impl DegradedAcc {
+    /// Feed one tick. A tick that is not degraded, or a gap longer than `gap_s`, ends the run.
+    pub(super) fn feed(&mut self, ts: DateTime<Utc>, degraded: bool, gap_s: i64, tick: Duration) {
+        if !degraded {
+            self.run = None;
+            return;
+        }
+        self.ticks += 1;
+        let start = match self.run {
+            Some((start, last)) if (ts - last).num_seconds() <= gap_s => start,
+            _ => ts,
+        };
+        self.run = Some((start, ts));
+        let len_s = ((ts - start) + tick).num_milliseconds() as f64 / 1000.0;
+        self.longest_s = self.longest_s.max(len_s);
+    }
+}
+
 #[derive(Default)]
 pub(super) struct IfAcc {
     pub(super) role: Option<IfaceRole>,
@@ -40,6 +67,7 @@ pub(super) struct IfAcc {
     pub(super) no_link_ticks: u64,
     /// Merged intervals without link or address.
     pub(super) no_link: Vec<(DateTime<Utc>, DateTime<Utc>)>,
+    pub(super) degraded: DegradedAcc,
     pub(super) open: OpenEp,
     pub(super) gw_all: Vec<f32>,
     pub(super) net_all: Vec<f32>,
@@ -314,6 +342,9 @@ impl Analyzer {
                 a.loaded_net.push(r as f32);
             }
         }
+        // Poor quality is a finding only when the network caused it, not our own load.
+        let own_load = s.speedtest_active || s.scan_active || s.overrun || self_traffic;
+        a.degraded.feed(ts, s.state == PathState::Degraded && !own_load, gap, tick);
         let h = local_hour(ts) as usize;
         a.hour_ticks[h] += 1;
         let bad = is_bad(s.state);

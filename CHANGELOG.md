@@ -15,6 +15,13 @@ each item.
   `unknown`. Wi-Fi `LanDown` with a cable `IspDown` now gives `mixed`, not `line_problem`.
   The verdict has English and Ukrainian text in the web UI, the advisor, the incident counts
   line and the support pack. The headline ties go to the concrete layer, never to `mixed`.
+- **Long Degraded is a finding:** a path that stays `Degraded` (loss or high latency, not
+  down) for one unbroken run of 5 min or more, or for 5 % of its ticks (and at least 1 min in
+  total), now gets a quality finding `f_degraded` in the findings list. It is not an episode,
+  so incident counts and availability do not change. Ticks during the monitor's own speed
+  tests, scans, overruns and heavy own traffic do not count. The limits are in
+  `analyze/limits.rs`. `IfaceReport` has the new fields `degraded_ticks` and
+  `degraded_longest_s` (omitted when zero).
 
 ## [0.12.0] - 2026-11-28
 

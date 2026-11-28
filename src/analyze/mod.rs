@@ -15,6 +15,7 @@
 pub mod attribution;
 mod detect;
 mod engine;
+pub mod limits;
 mod markdown;
 pub mod reclassify;
 mod stages;
@@ -224,6 +225,21 @@ pub struct IfaceReport {
     /// Stalls during the host's own traffic (not counted in `stalls`).
     #[serde(default)]
     pub self_traffic_stalls: u32,
+    /// Ticks in state `Degraded` (loss or latency, not down), without ticks of the monitor's own
+    /// load (speed test, scan, overrun, own heavy traffic). Not part of the outage numbers.
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub degraded_ticks: u64,
+    /// The longest unbroken run of such ticks, in seconds.
+    #[serde(default, skip_serializing_if = "is_zero_f64")]
+    pub degraded_longest_s: f64,
+}
+
+fn is_zero_u64(v: &u64) -> bool {
+    *v == 0
+}
+
+fn is_zero_f64(v: &f64) -> bool {
+    *v == 0.0
 }
 
 #[derive(Debug, Clone, Serialize, Default)]

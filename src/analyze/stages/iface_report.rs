@@ -80,6 +80,8 @@ fn iface_report(name: &str, a: &mut IfAcc, eps: &[&Episode], share: &ObserverSha
     let mut r = IfaceReport { iface: name.to_string(), role: a.role, ticks: eff_ticks, no_link_ticks: a.no_link_ticks, had_link: a.had_link, ..Default::default() };
     r.reconnects = a.reconnects;
     r.stalls = a.stalls;
+    r.degraded_ticks = a.degraded.ticks;
+    r.degraded_longest_s = a.degraded.longest_s;
     r.loaded_gw_rtt_med = pct(&mut a.loaded_gw, 0.5);
     r.loaded_net_rtt_med = pct(&mut a.loaded_net, 0.5);
     r.availability_pct = if eff_ticks > 0 {

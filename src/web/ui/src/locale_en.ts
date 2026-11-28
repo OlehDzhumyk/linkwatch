@@ -768,6 +768,7 @@ export const EN = {
   "m.f_iface": "{iface} ({role}): available {avail}%, {ep} outages, {micro} micro-drops, longest {longest}s, router RTT {gw} ms, internet RTT {net} ms",
   "m.f_evening_speed": "{iface}: evening speed {peak} Mbit/s vs {all} overall — the line is congested in the evening",
   "m.f_busy": "{iface}: channel busy {b}% of the time (median) — strong co-channel interference",
+  "m.f_degraded": "{iface}: degraded (loss or high latency, but not down) for {pct}% of the time ({total} min in total, longest run {run} min) — a quality problem, not an outage",
   "m.f_stalls": "{iface}: {n} stalls (path answered, but very late: router > 200 ms or internet > 500 ms) — felt as freezes",
   "m.f_reconnects": "{iface}: re-associated to the same access point {n} times (short disconnects)",
   "m.f_bufferbloat": "{iface}: internet RTT {load} ms during speed tests vs {idle} ms idle — latency under load (bufferbloat)",
