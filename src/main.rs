@@ -30,6 +30,7 @@ mod site;
 mod speed;
 mod store;
 mod support_report;
+mod verdict;
 mod web;
 mod wifi;
 

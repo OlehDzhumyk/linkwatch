@@ -10,6 +10,7 @@ use crate::model::{
 };
 use crate::control::{SendError, SessionRequest};
 use crate::session::{self, LoadOpts};
+use crate::verdict;
 use crate::site::{BuildingView, Site};
 use crate::store::read;
 use std::sync::Arc;
@@ -1400,96 +1401,22 @@ fn all_stream_files_stamp(dir: &Path) -> String {
     parts.join(",")
 }
 
-fn dominant_cause(rep: &Report) -> Option<Verdict> {
-    let mut counts: BTreeMap<usize, (Verdict, u32, f64)> = BTreeMap::new();
-    let key_of = |v: Verdict| match v {
-        Verdict::AllOk => 0,
-        Verdict::WifiProblem => 1,
-        Verdict::WiredProblem => 2,
-        Verdict::RouterProblem => 3,
-        Verdict::LineProblem => 4,
-        Verdict::InternetProblem => 5,
-        Verdict::Dns => 6,
-        Verdict::SinglePath => 7,
-        Verdict::Unknown => 8,
-    };
-    for ep in &rep.episodes {
-        if ep.origin == IncidentOrigin::Observer || crate::analyze::is_load_provoked(ep) {
-            continue;
-        }
-        let Some(c) = ep.cause else { continue };
-        if matches!(c, Verdict::AllOk | Verdict::Unknown) {
-            continue;
-        }
-        let e = counts.entry(key_of(c)).or_insert((c, 0, 0.0));
-        e.1 += 1;
-        e.2 += ep.duration_s;
-    }
-    counts
-        .into_values()
-        .max_by(|a, b| a.1.cmp(&b.1).then_with(|| a.2.total_cmp(&b.2)))
-        .map(|(c, _, _)| c)
-}
-
-/// Verdict explanation: stable code + placeholder values for the UI, and the English text.
-struct VerdictText {
-    code: &'static str,
-    args: BTreeMap<String, String>,
-    text: String,
-}
-
 /// A cached report with the verdict sentence of the current live verdict: the report may be up
 /// to [`REPORT_FRESH`] old, but its headline must never contradict the live status.
 fn with_live_verdict(rep: &ReportResponse, live: Option<Verdict>) -> Response {
     if rep.verdict == live {
         return json_body(rep);
     }
-    let vt = explain_verdict(live, rep.network_incidents, rep.observer_incidents, &rep.ifaces);
+    let wifi_signal = rep.ifaces.iter().find(|i| i.role == Some(IfaceRole::Wifi)).and_then(|i| i.signal_med);
+    let h = verdict::explain(live, rep.network_incidents, rep.observer_incidents, wifi_signal);
     let Ok(mut v) = serde_json::to_value(rep) else { return json_body(rep) };
     if let Some(o) = v.as_object_mut() {
         o.insert("verdict".into(), serde_json::to_value(live).unwrap_or_default());
-        o.insert("verdict_summary".into(), vt.text.into());
-        o.insert("verdict_code".into(), vt.code.into());
-        o.insert("verdict_args".into(), serde_json::to_value(vt.args).unwrap_or_default());
+        o.insert("verdict_summary".into(), h.text.into());
+        o.insert("verdict_code".into(), h.code.into());
+        o.insert("verdict_args".into(), serde_json::to_value(h.args).unwrap_or_default());
     }
     json_body(&v)
-}
-
-fn explain_verdict(verdict: Option<Verdict>, net_inc: u32, obs_inc: u32, ifaces: &[ReportIface]) -> VerdictText {
-    let wifi_sig = ifaces
-        .iter()
-        .find(|i| i.role == Some(IfaceRole::Wifi))
-        .and_then(|i| i.signal_med);
-    let one = |code, text: &str| VerdictText { code, args: BTreeMap::new(), text: text.into() };
-    let with = |code, k: &str, v: String, text: String| VerdictText { code, args: BTreeMap::from([(k.to_string(), v)]), text };
-    match verdict {
-        Some(Verdict::AllOk) => {
-            if obs_inc > 0 && net_inc == 0 {
-                with("all_ok_observer", "n", obs_inc.to_string(), format!("Network stayed healthy ({obs_inc} observer-host incident(s) excluded)."))
-            } else if net_inc > 0 {
-                with("all_ok_earlier", "n", net_inc.to_string(), format!("Paths are healthy right now; {net_inc} earlier incident(s) recorded in this session."))
-            } else {
-                one("all_ok_clean", "All monitored paths are healthy with no drops recorded.")
-            }
-        }
-        Some(Verdict::WifiProblem) => match wifi_sig {
-            Some(s) if s < -75.0 => with("wifi_weak", "dbm", format!("{s:.0}"), format!("Ethernet stayed stable while Wi-Fi failed — weak Wi-Fi signal (median {s:.0} dBm).")),
-            _ => one("wifi", "Ethernet stayed stable while Wi-Fi failed — issue is on the wireless hop."),
-        },
-        Some(Verdict::WiredProblem) => one("wired", "Wi-Fi stayed up while the wired path failed — check Ethernet cable or port."),
-        Some(Verdict::RouterProblem) => one("router", "All monitored paths failed at the router — router rebooted, stalled, or LAN stopped responding."),
-        Some(Verdict::LineProblem) => one("line", "All paths reached the router but failed at the ISP hop — issue is on the access line."),
-        Some(Verdict::InternetProblem) => one("internet", "Local network and ISP hop answered, but external internet targets timed out."),
-        Some(Verdict::Dns) => one("dns", "IP probes succeeded, but DNS name resolution failed."),
-        Some(Verdict::SinglePath) => {
-            if net_inc == 0 {
-                one("single_clean", "Monitoring a single path cleanly (connect Ethernet alongside Wi-Fi to isolate Wi-Fi vs ISP faults).")
-            } else {
-                with("single_incidents", "n", net_inc.to_string(), format!("Single monitored path had {net_inc} incident(s); add a second path to separate Wi-Fi from the line."))
-            }
-        }
-        Some(Verdict::Unknown) | None => one("waiting", "Waiting for enough samples to classify path health."),
-    }
 }
 
 fn analyze_session_raw(dir: &Path) -> anyhow::Result<Report> {
@@ -1537,13 +1464,7 @@ fn analyze_session_dir(dir: &Path, id: String, live_verdict: Option<Verdict>) ->
                 .collect(),
         })
         .collect();
-    let verdict = live_verdict
-        .or_else(|| dominant_cause(&rep))
-        .or(match rep.ifaces.len() {
-            0 => None,
-            1 => Some(Verdict::SinglePath),
-            _ => Some(Verdict::AllOk),
-        });
+    let headline = verdict::headline(&rep, live_verdict);
     let mut episodes: Vec<ReportEpisode> = rep
         .episodes
         .iter()
@@ -1566,16 +1487,15 @@ fn analyze_session_dir(dir: &Path, id: String, live_verdict: Option<Verdict>) ->
         .collect();
     // Ensure strict newest-first order when multiple interfaces had interleaved episodes.
     episodes.sort_by_key(|a| std::cmp::Reverse(a.start));
-    let vt = explain_verdict(verdict, rep.network_incidents, rep.observer_incidents, &ifaces);
     Ok(ReportResponse {
         session: id,
         from: rep.from,
         to: rep.to,
         hours: rep.hours,
-        verdict,
-        verdict_summary: vt.text,
-        verdict_code: vt.code.into(),
-        verdict_args: vt.args,
+        verdict: headline.verdict,
+        verdict_summary: headline.text,
+        verdict_code: headline.code.into(),
+        verdict_args: headline.args,
         network_incidents: rep.network_incidents,
         load_incidents: rep.load_incidents,
         observer_incidents: rep.observer_incidents,
@@ -1623,16 +1543,16 @@ async fn report(State(st): State<AppState>, Query(q): Query<ReportQuery>) -> Api
     let live_verdict = st.live.read(|s| s.verdict);
     let (id, dir) = resolve_report_target(&st, q.session)?;
     let Some(dir) = dir else {
-        let vt = explain_verdict(live_verdict, 0, 0, &[]);
+        let headline = verdict::headline(&Report::default(), live_verdict);
         return Ok(json_body(&ReportResponse {
             session: id,
             from: None,
             to: None,
             hours: 0.0,
-            verdict: live_verdict,
-            verdict_summary: vt.text,
-            verdict_code: vt.code.into(),
-            verdict_args: vt.args,
+            verdict: headline.verdict,
+            verdict_summary: headline.text,
+            verdict_code: headline.code.into(),
+            verdict_args: headline.args,
             network_incidents: 0,
             load_incidents: 0,
             observer_incidents: 0,
