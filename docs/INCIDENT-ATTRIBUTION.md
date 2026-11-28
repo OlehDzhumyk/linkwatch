@@ -61,8 +61,10 @@ Built by the engine from data that every session already records. No new measure
 | `power_save` | this Wi-Fi iface only | whole outage **only if** ≤ 2 ticks | weak | power-save adds latency and 1–2 missed beacons, not long full loss |
 | `clock_jump` | all paths | max 5 s | strong | the wall clock was stepped (`ClockJump`); tick timing around it is not trustworthy |
 
-`host_explained_s` = the largest explained value of the suspects that apply (capped at the
-duration). Ratio `r = host_explained_s / duration_s`.
+`host_explained_s` = the largest explained value of the suspects that apply and are **not
+contradicted** (capped at the duration); see section 6 for the exact rule. Ratio
+`r = host_explained_s / duration_s`. All numbers are named constants in `mod limits` of
+`attribution.rs`; section 6a lists them.
 
 ## 5. Counter-evidence (independent of the host)
 
@@ -104,7 +106,7 @@ Observer results carry no network causes.
 
 ```text
 Attribution = network | network_despite_host | mixed | observer_likely | observer_confirmed
-Confidence  = high | medium | low          (for network results)
+Confidence  = high | medium | low          (network results: independence; observer results: see below)
 ```
 
 Decision, in this order:
@@ -122,14 +124,60 @@ Decision, in this order:
    - `0.1 ≤ r < 0.8` → `mixed`.
    - `r < 0.1` → `network_despite_host`.
 
-`mixed` reports `host_explained_s` and `network_s = duration − host_explained_s`. A load
-incident (`speed_test` contradicted by another failing path) is the exception: the host
-provoked it and the network really failed under that load, so `network_s = duration`.
+**Rule for `host_s` (`host_explained_s`).**
+- `host_s` is the maximum `explains_s` over the candidates that independent evidence does
+  **not** contradict. A contradicted suspect never raises it.
+- If the main suspect is contradicted, its own value still decides the grade (the ratio `r` is
+  taken from `max(non-contradicted, main)`), because it is the strongest hint.
+- `mixed` reports `network_s = duration − host_s`. When the main suspect is contradicted, the
+  reported `host_s` is capped at `duration − tick`, so a `mixed` result never shows
+  `network_s = 0`. If the cap leaves `host_s = 0` (a one-tick outage), the result is
+  `network_despite_host`.
+- Without contradiction `mixed` has `r < 0.8`, so `network_s > 0.2 · duration`.
+- The only `mixed` with `network_s = duration` is the **load incident** (`speed_test`
+  contradicted by another failing path): the host provoked it and the network really failed
+  under that load, so `host_s` keeps the speed-test value and `network_s = duration` by design.
+- `network_despite_host` reports `host_s` as what the host could have explained, and
+  `network_s = duration`.
+
+Confidence of `observer_likely` and `observer_confirmed` (the main suspect is not contradicted):
+- `high`: the main suspect is `strong` or `confirmed`, it explains the whole outage
+  (`explains_s ≥ duration`), and a comparable path had link and stayed fine
+  (`comparable_paths > 0` and `other_failed` empty).
+- `medium`: the main suspect is `strong` or `confirmed`, but it covers only part of the outage
+  (for example 25 late ticks of 30), or no comparable path stayed fine (single path, or the
+  other path failed with its own traffic or in a suspend).
+- `low`: the main suspect is `weak` (`observer_likely`).
 
 Confidence of `network`, `network_despite_host` and `mixed`:
 - `high`: another path failed, a router log line, or an AP disconnect.
 - `medium`: another path was comparable (had link) and stayed fine.
 - `low`: single path, nothing independent.
+
+### 6a. Thresholds and why
+
+All values live in `mod limits` in `src/analyze/attribution.rs`. "Engineering estimate" means
+there is no measured source: the value is a judgement and can be tuned.
+
+| Constant | Value | Reason |
+|---|---|---|
+| `MIN_TICK_S` | 0.2 s | Guard against a zero or tiny tick length. Engineering estimate. |
+| `SCAN_BASE_S` | 2 s | A scan keeps the radio off-channel for a few seconds in total. Engineering estimate. |
+| `SCAN_MAX_S` | 12 s | A full multi-band scan rarely blocks the link longer. Engineering estimate. |
+| `SPEEDTEST_BASE_S` | 5 s | The line stays loaded a while after the last bad tick. Engineering estimate. |
+| `SPEEDTEST_MAX_S` | 30 s | Longest plausible disturbance by one speed test. Engineering estimate. |
+| `SELF_TRAFFIC_BASE_S` | 5 s | Queues need seconds to drain after heavy own traffic. Engineering estimate. |
+| `SELF_TRAFFIC_MAX_S` | 30 s | Longest plausible disturbance by own traffic. Engineering estimate. |
+| `THROTTLE_MAX_S` | 15 s | Throttling is only a hint. Engineering estimate. |
+| `LOW_MEMORY_MAX_S` | 15 s | Low memory is only a hint. Engineering estimate. |
+| `CLOCK_JUMP_MAX_S` | 5 s | A clock step distorts about one short window. Engineering estimate. |
+| `DRIVER_RESET_MAX_OFFSET_S` | 5 s | A reset later than this is a consequence of the outage. Engineering estimate. |
+| `POWER_SAVE_MAX_TICKS` | 2 ticks | Power-save loses a few beacons (beacon interval about 102 ms, IEEE 802.11), not a long full loss; the 2-tick limit is an engineering estimate. |
+| `OVERRUN_STRONG_SHARE` | 0.5 | Late ticks are strong when they are at least half of the bad ticks. Engineering estimate. |
+| `WEAK_SIGNAL_DBM` | −75 dBm | Common rule of thumb for unreliable Wi-Fi. Engineering estimate. |
+| `BUSY_CHANNEL_PCT` | 70 % | Little air time is left above this. Engineering estimate. |
+| `OBSERVER_RATIO` | 0.8 | A host effect at 80 % or more of the outage counts as covering it. Engineering estimate. |
+| `MIXED_RATIO` | 0.1 | Below 10 % a host effect is noise. Engineering estimate. |
 
 ### Mapping to the existing fields (backward compatible)
 
@@ -279,7 +327,7 @@ Rules:
 | M5 | Clock not synchronized, router log imported | `router_log` matches not used as counter-evidence; note | ±120 s matching needs a trusted clock |
 | M6 | Own speed test every 30 min in the evening | `blinded: isp` for the evening congestion pattern | own load is confounded with ISP peak load |
 | M7 | VPN active during the session | `blinded: isp`, `line` for internet-path incidents | probes travel the tunnel |
-| M8 | Router ignores ICMP (rate limit), internet fine | gateway loss does not blame the router (already in `classify`) | the router is busy answering, not down |
+| M8 | Router ignores ICMP (rate limit), internet fine | gateway loss does not blame the router | the router is busy answering, not down. Today only the Degraded check in `classify` allows for it; the other gateway-loss paths do not. Being fixed in the classifier (not done yet). |
 | M9 | Monitor gap (service restart, disk full) | no conclusion inside the gap; gap listed | nothing was measured |
 | M10 | Observer Trust `polluted` all night (late ticks) | every network result at most `medium`; no `observer_confirmed` needed per incident | session-wide; reported once |
 | M11 | 2 % of ticks late (Trust `caution`) | nothing blinded; one note | tolerated (rule 2) |
