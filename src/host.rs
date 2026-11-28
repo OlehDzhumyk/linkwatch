@@ -1,7 +1,8 @@
 //! Measuring host health (`host` stream): CPU, memory, disk, temperature,
 //! Raspberry Pi throttling/undervoltage, clock sync, Wi-Fi power-save and driver resets.
 //!
-//! Reads `/proc` and `/sys` directly; never spawns subprocesses and never panics.
+//! Reads `/proc` and `/sys` directly and asks a local `chronyd` over its read-only UDP
+//! command port; never spawns subprocesses and never panics.
 
 use crate::link;
 use crate::model::{EventKind, HostSample, IfaceRole};
@@ -43,6 +44,97 @@ pub fn clock_sync_source() -> Option<&'static str> {
         return Some("ntpd");
     }
     None
+}
+
+/// Clock state as `chronyd` reports it (`chronyc tracking`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ChronyTracking {
+    /// Leap status is not "unsynchronised", a reference is selected and the stratum is valid.
+    pub synced: bool,
+    pub stratum: u16,
+    /// Current offset of the system clock from NTP time, seconds (positive: fast).
+    pub offset_s: f64,
+    /// Upper bound of the clock error: |offset| + root delay / 2 + root dispersion, seconds.
+    pub max_error_s: f64,
+}
+
+const CHRONY_CMD_PORT: u16 = 323;
+const CHRONY_REQ_TRACKING: u16 = 33;
+const CHRONY_RPY_TRACKING: u16 = 5;
+/// The request is padded to the reply length (chrony refuses shorter ones: no amplification).
+const CHRONY_TRACKING_LEN: usize = 104;
+
+/// Asks the local `chronyd` (127.0.0.1:323, unprivileged) for its tracking state.
+/// `None` when chrony does not answer within 300 ms (not running, or `cmdport 0`).
+pub fn chrony_tracking() -> Option<ChronyTracking> {
+    let sock = std::net::UdpSocket::bind(("127.0.0.1", 0)).ok()?;
+    sock.set_read_timeout(Some(std::time::Duration::from_millis(300))).ok()?;
+    sock.connect(("127.0.0.1", CHRONY_CMD_PORT)).ok()?;
+    let seq = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.subsec_nanos() | 1);
+    sock.send(&chrony_tracking_request(seq)).ok()?;
+    let mut buf = [0u8; 512];
+    let n = sock.recv(&mut buf).ok()?;
+    parse_chrony_tracking(&buf[..n], seq)
+}
+
+fn chrony_tracking_request(seq: u32) -> [u8; CHRONY_TRACKING_LEN] {
+    let mut r = [0u8; CHRONY_TRACKING_LEN];
+    r[0] = 6; // protocol version
+    r[1] = 1; // request
+    r[4..6].copy_from_slice(&CHRONY_REQ_TRACKING.to_be_bytes());
+    r[8..12].copy_from_slice(&seq.to_be_bytes());
+    r
+}
+
+/// chrony's 32-bit float: 7-bit signed exponent, 25-bit signed coefficient.
+fn chrony_float(x: u32) -> f64 {
+    let mut exp = (x >> 25) as i32;
+    if exp >= 1 << 6 {
+        exp -= 1 << 7;
+    }
+    exp -= 25;
+    let mut coef = (x & ((1 << 25) - 1)) as i64;
+    if coef >= 1 << 24 {
+        coef -= 1 << 25;
+    }
+    coef as f64 * 2f64.powi(exp)
+}
+
+fn parse_chrony_tracking(d: &[u8], seq: u32) -> Option<ChronyTracking> {
+    let u16_at = |o: usize| d.get(o..o + 2).map(|b| u16::from_be_bytes([b[0], b[1]]));
+    let u32_at = |o: usize| d.get(o..o + 4).map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]));
+    if d.len() < CHRONY_TRACKING_LEN || d[1] != 2 || u16_at(4)? != CHRONY_REQ_TRACKING || u16_at(6)? != CHRONY_RPY_TRACKING {
+        return None;
+    }
+    // status 0 = success; the sequence must be ours.
+    if u16_at(8)? != 0 || u32_at(16)? != seq {
+        return None;
+    }
+    let b = 28; // reply header
+    let ref_id = u32_at(b)?;
+    let stratum = u16_at(b + 24)?;
+    let leap = u16_at(b + 26)?;
+    // chrony sends the correction still to apply; the clock offset has the opposite sign.
+    let offset_s = -chrony_float(u32_at(b + 40)?);
+    let root_delay = chrony_float(u32_at(b + 64)?);
+    let root_disp = chrony_float(u32_at(b + 68)?);
+    Some(ChronyTracking {
+        synced: leap != 3 && ref_id != 0 && stratum > 0 && stratum < 16,
+        stratum,
+        offset_s,
+        max_error_s: offset_s.abs() + root_delay.abs() / 2.0 + root_disp.abs(),
+    })
+}
+
+/// Whether the clock is NTP-synchronized. For chrony this asks the daemon (H10: a running
+/// daemon that lost its servers is not a synchronized clock); a silent chrony counts as
+/// synchronized, as before.
+pub fn clock_synced() -> bool {
+    match clock_sync_source() {
+        Some("chrony") => chrony_tracking().is_none_or(|t| t.synced),
+        Some(_) => true,
+        None => false,
+    }
 }
 
 /// Parses the aggregate `cpu ...` line from `/proc/stat` into `(busy_jiffies, total_jiffies)`.
@@ -216,7 +308,7 @@ impl HostMonitor {
         let disk_free_bytes = crate::store::free_bytes(data_dir);
         let temp_c = read_max_temp_c();
         let rpi_throttled = read_rpi_throttled();
-        let clock_synced = Some(clock_sync_source().is_some());
+        let clock_synced = Some(clock_synced());
 
         let mut ifindexes = Vec::with_capacity(ifaces.len());
         for (name, _) in ifaces {
@@ -322,6 +414,34 @@ impl HostMonitor {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn chrony_tracking_reply_parses() {
+        // Header (28 bytes) + tracking data (76 bytes), as sent by chronyd 4.x.
+        let mut d = vec![0u8; 104];
+        d[0] = 6;
+        d[1] = 2;
+        d[4..6].copy_from_slice(&33u16.to_be_bytes());
+        d[6..8].copy_from_slice(&5u16.to_be_bytes());
+        d[16..20].copy_from_slice(&77u32.to_be_bytes());
+        d[28..32].copy_from_slice(&0xB97D_BE7Bu32.to_be_bytes());
+        d[52..54].copy_from_slice(&3u16.to_be_bytes()); // stratum
+        // offset 0.5 s: coef 2^24-1 would overflow sign; use coef 1 << 23, exp -24 -> 0.5
+        let f = |exp: i32, coef: u32| (((exp + 25) as u32 & 0x7f) << 25) | (coef & 0x1ff_ffff);
+        d[68..72].copy_from_slice(&f(-24, 1 << 23).to_be_bytes());
+        d[96..100].copy_from_slice(&f(-30, 1 << 23).to_be_bytes()); // root dispersion ~0.0078
+        let t = super::parse_chrony_tracking(&d, 77).unwrap();
+        assert!(t.synced);
+        assert_eq!(t.stratum, 3);
+        assert!((t.offset_s + 0.5).abs() < 1e-9, "{}", t.offset_s);
+        assert!((t.max_error_s - (0.5 + 0.0078125)).abs() < 1e-6, "{}", t.max_error_s);
+        assert!(super::parse_chrony_tracking(&d, 78).is_none(), "foreign sequence");
+        d[54..56].copy_from_slice(&3u16.to_be_bytes()); // leap = unsynchronised
+        assert!(!super::parse_chrony_tracking(&d, 77).unwrap().synced);
+        assert_eq!(super::chrony_float(0), 0.0);
+        let r = super::chrony_tracking_request(9);
+        assert_eq!((r.len(), r[0], r[1], &r[4..6], &r[8..12]), (104, 6, 1, &[0u8, 33][..], &9u32.to_be_bytes()[..]));
+    }
+
     use super::*;
 
     #[test]

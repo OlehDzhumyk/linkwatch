@@ -172,16 +172,27 @@ pub async fn check(cfg: &Config) -> Vec<Item> {
     }
 
     // Time sync matters for correlating with router logs and multi-observer compare.
+    // For chrony, ask the daemon: a running chronyd that lost its servers is not synchronized (H10).
     let sync = host::clock_sync_source();
-    out.push(item(
-        if sync.is_some() { Level::Ok } else { Level::Warn },
-        "clock",
-        match sync {
-            Some(src) => format!("NTP synchronized ({src})"),
-            None => "sync state unknown".into(),
-        },
-        sync.is_none().then_some("enable chrony or systemd-timesyncd; timestamps are compared across observers and router logs"),
-    ));
+    let chrony = (sync == Some("chrony")).then(host::chrony_tracking).flatten();
+    let (lvl, detail, fix) = match (sync, chrony) {
+        (Some(_), Some(t)) if !t.synced => (
+            Level::Warn,
+            format!("chrony runs but is not synchronized (stratum {})", t.stratum),
+            Some("check `chronyc sources`: the NTP servers are not reachable"),
+        ),
+        (Some(_), Some(t)) => {
+            let big = t.max_error_s > 0.1;
+            (
+                if big { Level::Warn } else { Level::Ok },
+                format!("NTP synchronized (chrony, stratum {}, offset {:+.1} ms, max error {:.1} ms)", t.stratum, t.offset_s * 1e3, t.max_error_s * 1e3),
+                big.then_some("the clock error is above 100 ms; cross-device comparisons will be loose"),
+            )
+        }
+        (Some(src), None) => (Level::Ok, format!("NTP synchronized ({src})"), None),
+        (None, _) => (Level::Warn, "sync state unknown".into(), Some("enable chrony or systemd-timesyncd; timestamps are compared across observers and router logs")),
+    };
+    out.push(item(lvl, "clock", detail, fix));
 
     // Web port.
     if cfg.web.enabled {
