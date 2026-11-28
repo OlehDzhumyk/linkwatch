@@ -7,15 +7,11 @@
 //! 4. Path proof per interface (H8, B11): echo replies to the gateway must arrive on the
 //!    interface that sent the request, not on the other one.
 
-use crate::check::{Item, Level};
+use crate::check::{Item, Level, item};
 use crate::model::IfaceRole;
 use crate::{link, probe};
 use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
-
-fn item(level: Level, name: impl Into<String>, detail: impl Into<String>, fix: Option<&str>) -> Item {
-    Item { level, name: name.into(), detail: detail.into(), fix: fix.map(String::from) }
-}
 
 /// Value at quantile `q` (0..=1) of `v` (sorted in place). `None` for an empty slice.
 fn quantile(v: &mut [f64], q: f64) -> Option<f64> {
@@ -53,6 +49,7 @@ async fn timer_jitter() -> Item {
         format!("wake-up delay p99 {p99:.1} ms, max {max:.1} ms (100 x 20 ms)"),
         (lvl != Level::Ok).then_some("the host is busy or throttled; stop heavy jobs (updates, builds, backups) or use a less loaded device"),
     )
+    .code("timer_jitter")
 }
 
 /// H1: ICMP echo to 127.0.0.1 at 10 Hz for 2 s.
@@ -101,7 +98,7 @@ fn pressure(dir: &std::path::Path) -> Option<Item> {
         "cpu/io pressure",
         format!("cpu {} io {} (PSI some avg10)", f(cpu), f(io)),
         (lvl != Level::Ok).then_some("tasks wait for CPU or disk; probe ticks will be late (overrun). Stop the busy job or use faster storage"),
-    ))
+    ).code("host_pressure"))
 }
 
 /// H8 / B11: 5 echoes to the gateway through `iface`; the interface's own receive counter
@@ -122,7 +119,7 @@ async fn path_proof(iface: &str, gateway: Option<Ipv4Addr>) -> Option<Item> {
     let delta = link::rx_packets(iface)?.saturating_sub(before);
     let name = format!("path proof {iface}");
     Some(if ok == 0 {
-        item(Level::Fail, name, format!("0/5 replies from {gw}"), Some("the router does not answer on this path"))
+        item(Level::Fail, name, format!("0/5 replies from {gw}"), Some("the router does not answer on this path")).code("path_isolation")
     } else if delta < ok {
         item(
             Level::Fail,
@@ -130,6 +127,7 @@ async fn path_proof(iface: &str, gateway: Option<Ipv4Addr>) -> Option<Item> {
             format!("{ok}/5 replies from {gw}, but only {delta} packet(s) received on {iface}"),
             Some("replies come back on the other interface (ARP flux / rp_filter); install deploy/90-linkwatch.conf and run `sysctl --system`"),
         )
+        .code("path_isolation")
     } else {
         item(Level::Ok, name, format!("{ok}/5 replies from {gw}, {delta} packet(s) received on {iface}"), None)
     })
@@ -217,7 +215,7 @@ pub async fn calibrate(ifaces: &[(String, IfaceRole)], gateway: Option<Ipv4Addr>
 pub fn calibration_items(c: &Calibration) -> Vec<Item> {
     let mut out = Vec::new();
     let t = if c.timer_p99_ms >= 5.0 { Level::Warn } else { Level::Ok };
-    out.push(item(t, "timer jitter", format!("p99 {:.1} ms, max {:.1} ms over {} s", c.timer_p99_ms, c.timer_max_ms, c.seconds), (t != Level::Ok).then_some("the host is busy; idle RTT below includes host delay")));
+    out.push(item(t, "timer jitter", format!("p99 {:.1} ms, max {:.1} ms over {} s", c.timer_p99_ms, c.timer_max_ms, c.seconds), (t != Level::Ok).then_some("the host is busy; idle RTT below includes host delay")).code("timer_jitter"));
     for b in &c.ifaces {
         let name = format!("baseline {}", b.iface);
         let Some(gw) = b.gateway else {

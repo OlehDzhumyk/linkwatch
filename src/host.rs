@@ -6,7 +6,7 @@
 
 use crate::link;
 use crate::model::{EventKind, HostAlertKind, HostSample, IfaceRole};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 /// Stable pseudonymous host identifier (64-bit FNV-1a of `/etc/machine-id`).
@@ -267,6 +267,40 @@ pub fn read_rpi_throttled() -> Option<u32> {
     val
 }
 
+/// What a `Latch` reports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Edge {
+    Started,
+    Cleared,
+}
+
+/// Once-per-session announcer of one condition (docs/ADVISOR.md rule 4): it reports the first
+/// start, then the first clear after that start, and nothing more. A condition that comes back
+/// later in the same session stays silent: the first report already told the user.
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct Latch {
+    started: bool,
+    cleared: bool,
+}
+
+impl Latch {
+    pub(crate) fn update(&mut self, on: bool) -> Option<Edge> {
+        if on && !self.started {
+            self.started = true;
+            return Some(Edge::Started);
+        }
+        if !on && self.started && !self.cleared {
+            self.cleared = true;
+            return Some(Edge::Cleared);
+        }
+        None
+    }
+}
+
+/// Text of the note that reports a cleared advisor condition. The notifier sender in
+/// `run/observer.rs` recognises the prefix.
+pub(crate) const ADVISOR_CLEARED_PREFIX: &str = "advisor: ";
+
 /// Stateful host observer: computes CPU deltas and emits edge-triggered host alerts.
 #[derive(Debug, Default)]
 pub struct HostMonitor {
@@ -275,12 +309,26 @@ pub struct HostMonitor {
     high_cpu_streak: u32,
     was_throttled: bool,
     was_low_mem: bool,
-    ps_warned: HashSet<String>,
+    /// Wi-Fi power-save, per interface.
+    ps_latch: HashMap<String, Latch>,
+    clock_latch: Latch,
+    /// Advisor risk codes the user accepted: their events are never emitted.
+    accept: Vec<String>,
 }
 
 impl HostMonitor {
+    #[cfg(test)]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A monitor that stays silent about the advisor conditions in `accept` (`[advisor] accept`).
+    pub fn with_accept(accept: Vec<String>) -> Self {
+        Self { accept, ..Self::default() }
+    }
+
+    fn accepted(&self, code: &str) -> bool {
+        self.accept.iter().any(|a| a == code)
     }
 
     pub fn sample(
@@ -398,17 +446,33 @@ impl HostMonitor {
             self.prev_ifindex.insert(name.clone(), *idx);
         }
 
-        for (iface, &on) in &sample.wifi_power_save {
-            if on {
-                if self.ps_warned.insert(iface.clone()) {
-                    events.push(EventKind::HostAlert {
+        if !self.accepted("wifi_power_save") {
+            for (iface, &on) in &sample.wifi_power_save {
+                match self.ps_latch.entry(iface.clone()).or_default().update(on) {
+                    Some(Edge::Started) => events.push(EventKind::HostAlert {
                         alert: HostAlertKind::WifiPowerSave,
                         iface: Some(iface.clone()),
-                        detail: format!("{iface}: Wi-Fi power_save is ON (can double RTT and add jitter)"),
-                    });
+                        detail: format!("{iface}: Wi-Fi power_save is ON (spoils: latency numbers; can double RTT and add jitter)"),
+                    }),
+                    Some(Edge::Cleared) => events.push(EventKind::Note {
+                        text: format!("{ADVISOR_CLEARED_PREFIX}wifi_power_save cleared on {iface}: power_save is off again"),
+                    }),
+                    None => {}
                 }
-            } else {
-                self.ps_warned.remove(iface);
+            }
+        }
+        // `None` = state unknown: no change.
+        if let (Some(synced), false) = (sample.clock_synced, self.accepted("clock_unsynced")) {
+            match self.clock_latch.update(!synced) {
+                Some(Edge::Started) => events.push(EventKind::HostAlert {
+                    alert: HostAlertKind::ClockUnsynced,
+                    iface: None,
+                    detail: "clock lost NTP synchronization (spoils: cross-device compare and router-log matching)".into(),
+                }),
+                Some(Edge::Cleared) => events.push(EventKind::Note {
+                    text: format!("{ADVISOR_CLEARED_PREFIX}clock_unsynced cleared: NTP synchronized again"),
+                }),
+                None => {}
             }
         }
 
@@ -507,5 +571,56 @@ mod tests {
         let (_, ev3) = m.evaluate(base, &[("wlo1".into(), 7)]);
         assert!(ev3.iter().any(|e| matches!(e, EventKind::HostAlert { alert: HostAlertKind::HighCpu, .. })));
         assert!(ev3.iter().any(|e| matches!(e, EventKind::HostAlert { alert: HostAlertKind::DriverReset, .. })));
+    }
+
+    fn sample(ps: Option<bool>, synced: Option<bool>) -> HostSample {
+        let mut s = HostSample { clock_synced: synced, ..Default::default() };
+        if let Some(on) = ps {
+            s.wifi_power_save.insert("wlo1".into(), on);
+        }
+        s
+    }
+
+    fn adv(evs: &[EventKind]) -> Vec<String> {
+        evs.iter()
+            .map(|e| match e {
+                EventKind::HostAlert { alert, .. } => format!("start:{}", alert.as_str()),
+                EventKind::Note { text } => format!("note:{}", text.split_whitespace().nth(1).unwrap_or("")),
+                _ => "other".into(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn latch_reports_start_and_clear_once() {
+        let mut l = Latch::default();
+        assert_eq!(l.update(false), None);
+        assert_eq!(l.update(true), Some(Edge::Started));
+        assert_eq!(l.update(true), None);
+        assert_eq!(l.update(false), Some(Edge::Cleared));
+        assert_eq!(l.update(true), None, "a return in the same session is silent");
+        assert_eq!(l.update(false), None);
+    }
+
+    #[test]
+    fn advisor_events_once_per_session() {
+        let mut m = HostMonitor::new();
+        let ix = [("wlo1".to_string(), 3u32)];
+        assert!(adv(&m.evaluate(sample(Some(false), Some(true)), &ix).1).is_empty());
+        assert_eq!(adv(&m.evaluate(sample(Some(true), Some(false)), &ix).1), ["start:wifi_power_save", "start:clock_unsynced"]);
+        assert!(m.evaluate(sample(Some(true), Some(false)), &ix).1.is_empty());
+        // Unknown clock state changes nothing.
+        assert!(m.evaluate(sample(Some(true), None), &ix).1.is_empty());
+        assert_eq!(adv(&m.evaluate(sample(Some(false), Some(true)), &ix).1), ["note:wifi_power_save", "note:clock_unsynced"]);
+        // Conditions return: silent for the rest of the session.
+        assert!(m.evaluate(sample(Some(true), Some(false)), &ix).1.is_empty());
+        assert!(m.evaluate(sample(Some(false), Some(true)), &ix).1.is_empty());
+    }
+
+    #[test]
+    fn accepted_advisor_conditions_are_silent() {
+        let mut m = HostMonitor::with_accept(vec!["wifi_power_save".into(), "clock_unsynced".into()]);
+        assert!(m.evaluate(sample(Some(true), Some(false)), &[]).1.is_empty());
+        assert!(m.evaluate(sample(Some(false), Some(true)), &[]).1.is_empty());
     }
 }

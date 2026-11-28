@@ -20,6 +20,7 @@ mod live;
 mod model;
 mod notify;
 mod probe;
+mod readiness;
 mod router;
 mod router_audit;
 mod run;
@@ -163,7 +164,9 @@ fn main() -> ExitCode {
                 if deep {
                     items.extend(deepcheck::deep(&run::resolve_ifaces(&cfg), cfg.targets.gateway).await);
                 }
-                Ok(check::print(&items))
+                let ok = check::print(&items);
+                readiness::print(&readiness::assess(&items, &cfg));
+                Ok(ok)
             }
             Cmd::Config => {
                 println!("{}", toml::to_string_pretty(&cfg).unwrap_or_default());

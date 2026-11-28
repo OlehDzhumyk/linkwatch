@@ -162,3 +162,10 @@ interval_s = 15
 # min_outage_s = 60
 # security_events = true
 # cooldown_s = 300
+
+[advisor]
+# Readiness advisor (`linkwatch check`, run events). Accept a risk and it stays silent.
+# Codes: no_wired_path, wifi_power_save, clock_unsynced, clock_loose, vpn_active, random_mac,
+#        bluetooth_24ghz, conntrack_full, two_net_managers, timer_jitter, host_pressure, disk_low.
+# Blocking problems (icmp_permission, data_dir, wifi_blocked, path_isolation) cannot be accepted.
+# accept = ["no_wired_path"]

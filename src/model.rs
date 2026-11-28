@@ -474,6 +474,8 @@ pub enum HostAlertKind {
     WifiPowerSave,
     Undervoltage,
     ThermalThrottle,
+    /// The clock lost NTP synchronization during the run.
+    ClockUnsynced,
     /// Any alert name this version does not know (for example from a newer version).
     #[serde(other)]
     Other,
@@ -488,6 +490,7 @@ impl HostAlertKind {
             Self::WifiPowerSave => "wifi_power_save",
             Self::Undervoltage => "undervoltage",
             Self::ThermalThrottle => "thermal_throttle",
+            Self::ClockUnsynced => "clock_unsynced",
             Self::Other => "other",
         }
     }

@@ -116,6 +116,7 @@ sudo systemctl start linkwatch
 
 ```sh
 linkwatch check [--deep]                               # preflight; --deep adds ~6 s of active self-tests
+                                                       # ends with a readiness block: what spoils which conclusion (docs/ADVISOR.md)
 linkwatch calibrate --seconds 60                       # idle baseline of every path -> calibration.json (informational; not yet used by analyze/compare)
 linkwatch run --point B1/F2/R3                         # start monitoring loop + Web UI
 linkwatch sessions                                     # list recorded sessions
