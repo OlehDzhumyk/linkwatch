@@ -102,7 +102,7 @@ impl PathClassifier {
             gw_rtt: s.gw.as_ref().and_then(|g| g.rtt_ms),
             net_rtt: s.net.rtt_ms,
         });
-        while self.window.len() > self.cfg.window as usize {
+        while self.window.len() > self.cfg.window_ticks as usize {
             self.window.pop_front();
         }
         let inst = if base == PathState::Ok && self.degraded() { PathState::Degraded } else { base };
@@ -117,7 +117,7 @@ impl PathClassifier {
     fn degraded(&self) -> bool {
         let obs: Vec<&Obs> = self.window.iter().filter(|o| o.counted).collect();
         // Need a minimum of evidence before calling a path degraded.
-        if obs.len() < (self.cfg.window as usize / 2).max(5) {
+        if obs.len() < (self.cfg.window_ticks as usize / 2).max(5) {
             return false;
         }
         let n = obs.len() as f64;
@@ -147,7 +147,7 @@ impl PathClassifier {
             _ => 1,
         };
         // Leaving Unknown at startup needs no debounce.
-        if count >= self.cfg.debounce || self.current == PathState::Unknown {
+        if count >= self.cfg.debounce_ticks || self.current == PathState::Unknown {
             let t = Transition {
                 from: self.current,
                 to: inst,
@@ -237,7 +237,7 @@ mod tests {
     use std::net::Ipv4Addr;
 
     fn cfg() -> Cfg {
-        Cfg { debounce: 3, window: 10, degraded_loss_pct: 2.0, degraded_gw_rtt_ms: 50.0, degraded_net_rtt_ms: 150.0 }
+        Cfg { debounce_ticks: 3, window_ticks: 10, ..Cfg::default() }
     }
     fn t0() -> chrono::DateTime<chrono::Utc> {
         chrono::DateTime::from_timestamp(1_800_000_000, 0).unwrap()

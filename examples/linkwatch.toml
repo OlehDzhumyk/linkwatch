@@ -69,10 +69,14 @@ dns_name = "example.com"
 # lan_s = 0
 
 [classify]
-# Consecutive ticks with the same state before a state change is recorded.
-debounce = 3
-# Window (ticks) for loss and latency evaluation.
-window = 30
+# Seconds a new state must hold before a state change is recorded. Same on every profile.
+debounce_s = 3.0
+# Seconds of the window for loss and latency evaluation. Same on every profile.
+window_s = 30.0
+# DEPRECATED: debounce and window in probe ticks (old files). Used only when the
+# matching *_s key is not set; if both are set, the seconds key wins.
+# debounce = 3
+# window = 30
 # Loss in percent above which a path is "degraded".
 degraded_loss_pct = 2.0
 # Router RTT in ms above which a path is "degraded".
