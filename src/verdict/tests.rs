@@ -191,3 +191,21 @@ fn dominant_cause_prefers_count_then_duration() {
     let eps = vec![net_ep(Verdict::RouterProblem, 10), net_ep(Verdict::Dns, 10)];
     assert_eq!(dominant_cause(&report(vec![], eps, 0, 0)), Some(Verdict::Dns));
 }
+
+#[test]
+fn mixed_names_its_code_and_text() {
+    let r = report(vec![iface(IfaceRole::Wifi, None), iface(IfaceRole::Ethernet, None)], vec![net_ep(Verdict::Mixed, 30)], 1, 0);
+    let h = headline(&r, None);
+    assert_eq!(h.verdict, Some(Verdict::Mixed));
+    check(&h, "mixed", &[], "Paths failed at different points at the same time — see the incidents for each path.");
+}
+
+#[test]
+fn mixed_loses_a_tie_to_a_concrete_layer() {
+    // Same count and same total: the concrete layer wins; Mixed has the lowest key.
+    let eps = vec![net_ep(Verdict::Mixed, 10), net_ep(Verdict::LineProblem, 10)];
+    assert_eq!(dominant_cause(&report(vec![], eps, 0, 0)), Some(Verdict::LineProblem));
+    // More Mixed episodes beat one concrete episode.
+    let eps = vec![net_ep(Verdict::Mixed, 10), net_ep(Verdict::Mixed, 10), net_ep(Verdict::LineProblem, 10)];
+    assert_eq!(dominant_cause(&report(vec![], eps, 0, 0)), Some(Verdict::Mixed));
+}

@@ -458,6 +458,13 @@ pub fn headline_dns_fault(lang: SupportLang) -> &'static str {
     }
 }
 
+pub fn headline_mixed(lang: SupportLang, n: u32) -> String {
+    match lang {
+        SupportLang::En => format!("Measured {n} incident(s) where the monitored paths failed at different points at the same time — see the incident list for each path."),
+        SupportLang::Uk => format!("Зафіксовано {n} інцидентів, коли шляхи одночасно обривалися в різних місцях — дивіться список інцидентів для кожного шляху."),
+    }
+}
+
 pub fn headline_healthy(lang: SupportLang) -> &'static str {
     match lang {
         SupportLang::En => "All monitored paths ran cleanly with no unprovoked outage pattern detected.",

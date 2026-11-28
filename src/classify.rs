@@ -185,6 +185,10 @@ fn is_bad(s: PathState) -> bool {
 /// A wired path without link or address (cable not plugged) cannot be compared, so it is left
 /// out of the cross-path verdict. A Wi-Fi path without link or address (disassociated, no DHCP)
 /// is a Wi-Fi failure and counts as bad.
+///
+/// `Mixed` means that the paths fail at the same time but at different layers, so no single layer
+/// explains them: some paths are bad and some are fine on *both* roles, or every path is bad but
+/// the deepest failures differ (for example `LanDown` on one path and `WanDown` on another).
 pub fn verdict(states: &[(IfaceRole, PathState)], isp_known: bool) -> Verdict {
     let no_link = |s: PathState| matches!(s, PathState::LinkDown | PathState::NoIp);
     // Every path lost link at the same time (more than one path): the router itself.
@@ -211,7 +215,8 @@ pub fn verdict(states: &[(IfaceRole, PathState)], isp_known: bool) -> Verdict {
         return match (wifi_bad, wired_bad) {
             (true, false) => Verdict::WifiProblem,
             (false, true) => Verdict::WiredProblem,
-            _ => Verdict::Unknown,
+            // Both kinds of path fail while a third one is fine: no role is the culprit.
+            _ => Verdict::Mixed,
         };
     }
     // Every path is bad: find where it breaks, using the deepest common failure.
@@ -223,13 +228,17 @@ pub fn verdict(states: &[(IfaceRole, PathState)], isp_known: bool) -> Verdict {
         // If even the cable cannot reach the router, the router (or its LAN side) is the problem.
         return Verdict::RouterProblem;
     }
-    if bad.iter().any(|(_, s)| *s == PathState::IspDown) {
-        return Verdict::LineProblem;
+    // One path reaches the router but not the ISP hop; the others fail at the ISP hop or beyond
+    // it. They all point at the access line.
+    if all(&|s| matches!(s, PathState::IspDown | PathState::WanDown)) {
+        return if bad.iter().any(|(_, s)| *s == PathState::IspDown) || !isp_known {
+            Verdict::LineProblem
+        } else {
+            Verdict::InternetProblem
+        };
     }
-    if all(&|s| s == PathState::WanDown) {
-        return if isp_known { Verdict::InternetProblem } else { Verdict::LineProblem };
-    }
-    Verdict::LineProblem
+    // The failures sit at different layers (router side, ISP side, DNS, ...).
+    Verdict::Mixed
 }
 
 #[cfg(test)]
@@ -515,7 +524,8 @@ mod tests {
         assert_eq!(verdict(&[(Wifi, LinkDown), (Ethernet, NoIp), (Ethernet, Ok)], true), Verdict::WifiProblem);
         assert_eq!(verdict(&[(Ethernet, LinkDown)], true), Verdict::Unknown);
         assert_eq!(verdict(&[(Wifi, IspDown), (Ethernet, IspDown)], true), Verdict::LineProblem);
-        assert_eq!(verdict(&[(Wifi, LanDown), (Ethernet, IspDown)], true), Verdict::LineProblem);
+        // The router is unreachable over Wi-Fi but reachable over the cable: two layers.
+        assert_eq!(verdict(&[(Wifi, LanDown), (Ethernet, IspDown)], true), Verdict::Mixed);
         assert_eq!(verdict(&[(Wifi, WanDown), (Ethernet, WanDown)], true), Verdict::InternetProblem);
         assert_eq!(verdict(&[(Wifi, WanDown), (Ethernet, WanDown)], false), Verdict::LineProblem);
         assert_eq!(verdict(&[(Wifi, LanDown), (Ethernet, LanDown)], true), Verdict::RouterProblem);
@@ -524,6 +534,71 @@ mod tests {
         assert_eq!(verdict(&[(Wifi, LanDown)], true), Verdict::SinglePath);
         assert_eq!(verdict(&[(Wifi, Unknown), (Ethernet, Unknown)], true), Verdict::Unknown);
         assert_eq!(verdict(&[(Wifi, Degraded), (Ethernet, Ok)], true), Verdict::AllOk);
+    }
+
+    /// Verdict for every pair (Wi-Fi state, wired state). Rows: Wi-Fi state. Columns: wired state.
+    /// Order of both: Ok, LinkDown, NoIp, LanDown, IspDown, WanDown, DnsDown, Degraded, Unknown.
+    ///
+    /// Non-obvious rows (letters: O ok, K link down, N no ip, A lan down, I isp down, W wan down,
+    /// D dns down, G degraded, U unknown):
+    /// - A wired path without link or address (K, N) is left out as "cable not plugged". With a
+    ///   good Wi-Fi it gives `AllOk`; with a failing Wi-Fi only one comparable path is left, so
+    ///   `SinglePath`. With an unknown Wi-Fi nothing is left: `Unknown`.
+    /// - Both paths without link or address (K/N with K/N): `RouterProblem` (all lost link).
+    /// - Wi-Fi K/N with a wired path that fails at A: every path is near the LAN: `RouterProblem`.
+    /// - Wi-Fi K/N with a wired I, W or D: the Wi-Fi hop and the cable fail at different layers:
+    ///   `Mixed`. Wi-Fi without link is not the same fault as the line.
+    /// - A with A: both cannot reach the router: `RouterProblem`. A with I, W or D: the router
+    ///   answers on one path only: `Mixed` (A with I was `LineProblem` before this rule).
+    /// - I with I, I with W: ISP hop down on at least one path, the rest beyond it: `LineProblem`.
+    /// - W with W: `InternetProblem` when the ISP hop is known and answers, else `LineProblem`.
+    /// - D with D: `Dns`. D with I or W: IP traffic works on one path and not on the other:
+    ///   `Mixed`.
+    /// - Degraded (G) is not bad: G with a bad path blames the bad role; G with G or O is `AllOk`.
+    /// - Unknown (U) paths are left out, like an unplugged cable: one bad path is `SinglePath`,
+    ///   no bad path is `AllOk` (with a known path) or `Unknown` (without one).
+    #[test]
+    fn verdict_for_every_pair_of_states() {
+        use IfaceRole::{Ethernet, Wifi};
+        use PathState::*;
+        use Verdict::{AllOk, Dns as DnsV, InternetProblem as Net, LineProblem as Line, Mixed, RouterProblem as Router, SinglePath as Single, WifiProblem as WifiV, WiredProblem as Wired};
+        const U: Verdict = Verdict::Unknown;
+        let states = [Ok, LinkDown, NoIp, LanDown, IspDown, WanDown, DnsDown, Degraded, PathState::Unknown];
+        // `W/W` is written as `Net` here and becomes `Line` when the ISP hop is unknown.
+        #[rustfmt::skip]
+        let table: [[Verdict; 9]; 9] = [
+            //            O       K       N       A       I       W       D       G       U
+            /* Wi O */ [AllOk,  AllOk,  AllOk,  Wired,  Wired,  Wired,  Wired,  AllOk,  AllOk],
+            /* Wi K */ [WifiV,  Router, Router, Router, Mixed,  Mixed,  Mixed,  WifiV,  Single],
+            /* Wi N */ [WifiV,  Router, Router, Router, Mixed,  Mixed,  Mixed,  WifiV,  Single],
+            /* Wi A */ [WifiV,  Single, Single, Router, Mixed,  Mixed,  Mixed,  WifiV,  Single],
+            /* Wi I */ [WifiV,  Single, Single, Mixed,  Line,   Line,   Mixed,  WifiV,  Single],
+            /* Wi W */ [WifiV,  Single, Single, Mixed,  Line,   Net,    Mixed,  WifiV,  Single],
+            /* Wi D */ [WifiV,  Single, Single, Mixed,  Mixed,  Mixed,  DnsV,   WifiV,  Single],
+            /* Wi G */ [AllOk,  AllOk,  AllOk,  Wired,  Wired,  Wired,  Wired,  AllOk,  AllOk],
+            /* Wi U */ [AllOk,  U,      U,      Single, Single, Single, Single, AllOk,  U],
+        ];
+        for (i, wifi) in states.iter().enumerate() {
+            for (j, wired) in states.iter().enumerate() {
+                for isp_known in [true, false] {
+                    let mut want = table[i][j];
+                    if want == Net && !isp_known {
+                        want = Line;
+                    }
+                    assert_eq!(verdict(&[(Wifi, *wifi), (Ethernet, *wired)], isp_known), want, "wifi {wifi:?}, wired {wired:?}, isp_known {isp_known}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn mixed_when_both_roles_fail_next_to_a_good_path() {
+        use IfaceRole::*;
+        use PathState::*;
+        // Wi-Fi and one cable fail, a second cable is fine: neither role is the culprit.
+        assert_eq!(verdict(&[(Wifi, LanDown), (Ethernet, LanDown), (Ethernet, Ok)], true), Verdict::Mixed);
+        // Only the cables fail while Wi-Fi is fine: still a wired problem.
+        assert_eq!(verdict(&[(Wifi, Ok), (Ethernet, LanDown), (Ethernet, WanDown)], true), Verdict::WiredProblem);
     }
 
     #[test]

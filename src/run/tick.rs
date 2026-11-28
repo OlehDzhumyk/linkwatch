@@ -203,6 +203,7 @@ pub(super) async fn tick_loop(ctx: Ctx, summary: Arc<Mutex<Summary>>) -> anyhow:
                     | Verdict::LineProblem
                     | Verdict::InternetProblem
                     | Verdict::Dns
+                    | Verdict::Mixed
                     // SinglePath is only returned when the single comparable path is failing.
                     | Verdict::SinglePath
             );

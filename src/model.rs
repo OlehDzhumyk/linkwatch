@@ -255,6 +255,7 @@ impl Verdict {
             Verdict::LineProblem => "line_problem",
             Verdict::InternetProblem => "internet_problem",
             Verdict::Dns => "dns",
+            Verdict::Mixed => "mixed",
             Verdict::SinglePath => "single_path",
             Verdict::Unknown => "unknown",
         }
@@ -278,6 +279,10 @@ pub enum Verdict {
     /// All paths fail beyond the ISP hop.
     InternetProblem,
     Dns,
+    /// Paths fail at different layers at the same time (for example Wi-Fi cannot reach the
+    /// router while the cable reaches it but not the internet), so no single layer explains
+    /// them.
+    Mixed,
     /// Only one path monitored, cannot compare.
     SinglePath,
     Unknown,
@@ -733,7 +738,7 @@ mod tests {
             assert_eq!(serde_json::to_value(p).unwrap(), p.as_str());
         }
         use Verdict::*;
-        for v in [AllOk, WifiProblem, WiredProblem, RouterProblem, LineProblem, InternetProblem, Dns, SinglePath, Verdict::Unknown] {
+        for v in [AllOk, WifiProblem, WiredProblem, RouterProblem, LineProblem, InternetProblem, Dns, Mixed, SinglePath, Verdict::Unknown] {
             assert_eq!(serde_json::to_value(v).unwrap(), v.as_str());
         }
     }

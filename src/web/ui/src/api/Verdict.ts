@@ -3,4 +3,4 @@
 /**
  * Cross-interface verdict for one moment.
  */
-export type Verdict = "all_ok" | "wifi_problem" | "wired_problem" | "router_problem" | "line_problem" | "internet_problem" | "dns" | "single_path" | "unknown";
+export type Verdict = "all_ok" | "wifi_problem" | "wired_problem" | "router_problem" | "line_problem" | "internet_problem" | "dns" | "mixed" | "single_path" | "unknown";

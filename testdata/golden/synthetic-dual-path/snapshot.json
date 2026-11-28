@@ -148,7 +148,7 @@
     "eth0 (ethernet): available 96.667%, 1 outages, 0 micro-drops, longest 20s, router RTT 1.0 ms, internet RTT 15.0 ms",
     "wlo1 (wifi): available 94.941%, 2 outages, 0 micro-drops, longest 20s, router RTT 3.0 ms, internet RTT 15.0 ms",
     "Observer: 1 incident(s) attributed to the observer device (scan/overrun/suspend/throttling) and excluded from network totals.",
-    "Of 2 network incidents (outages and micro-drops, merged across interfaces): 1 only on Wi-Fi (cable fine), 0 only on cable, 0 router, 1 line/ISP, 0 internet beyond the ISP, 0 DNS, 0 not comparable (one path only), 0 unclear."
+    "Of 2 network incidents (outages and micro-drops, merged across interfaces): 1 only on Wi-Fi (cable fine), 0 only on cable, 0 router, 1 line/ISP, 0 internet beyond the ISP, 0 DNS, 0 paths failing at different points, 0 not comparable (one path only), 0 unclear."
   ],
   "findings_msg": [
     {
@@ -191,6 +191,7 @@
         "dns": "0",
         "inet": "0",
         "line": "1",
+        "mixed": "0",
         "router": "0",
         "single": "0",
         "total": "2",
@@ -199,7 +200,7 @@
         "wired": "0"
       },
       "code": "f_incidents",
-      "text": "Of 2 network incidents (outages and micro-drops, merged across interfaces): 1 only on Wi-Fi (cable fine), 0 only on cable, 0 router, 1 line/ISP, 0 internet beyond the ISP, 0 DNS, 0 not comparable (one path only), 0 unclear."
+      "text": "Of 2 network incidents (outages and micro-drops, merged across interfaces): 1 only on Wi-Fi (cable fine), 0 only on cable, 0 router, 1 line/ISP, 0 internet beyond the ISP, 0 DNS, 0 paths failing at different points, 0 not comparable (one path only), 0 unclear."
     }
   ],
   "from": "2026-01-15T10:00:00Z",

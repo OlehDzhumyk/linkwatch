@@ -320,6 +320,7 @@ pub fn evaluate(snap: &LiveSnapshot, audit: Option<&RouterAudit>) -> AdviceRespo
             Verdict::LineProblem => ("critical", "The line to the provider is failing", "The router answers but the provider's first hop does not: report the times to the ISP."),
             Verdict::InternetProblem => ("warn", "Internet targets fail beyond the provider", "The local network and the provider answer; the problem is further upstream."),
             Verdict::Dns => ("warn", "Name resolution (DNS) is failing", "Addresses answer but names do not resolve: check the DNS servers the router hands out."),
+            Verdict::Mixed => ("warn", "Paths fail at different points", "Wi-Fi and the cable fail at different layers at the same time: check each path on its own before you look for one cause."),
             Verdict::AllOk | Verdict::SinglePath | Verdict::Unknown => ("", "", ""),
         };
         if !severity.is_empty() {

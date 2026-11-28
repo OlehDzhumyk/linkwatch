@@ -618,6 +618,7 @@ pub fn build_pack(input: &SupportInput<'_>, opts: &SupportOpts) -> SupportPack {
     let mut inet_incidents = 0u32;
     let mut dns_incidents = 0u32;
     let mut wifi_incidents = 0u32;
+    let mut mixed_incidents = 0u32;
     let mut router_resets = 0u32;
     let mut has_router_telemetry = false;
     let mut loaded_rtt_peak: Option<f64> = None;
@@ -644,6 +645,7 @@ pub fn build_pack(input: &SupportInput<'_>, opts: &SupportOpts) -> SupportPack {
         inet_incidents += s.report.incidents.get("internet_problem").copied().unwrap_or(0);
         dns_incidents += s.report.incidents.get("dns").copied().unwrap_or(0);
         wifi_incidents += s.report.incidents.get("wifi_problem").copied().unwrap_or(0);
+        mixed_incidents += s.report.incidents.get("mixed").copied().unwrap_or(0);
 
         if s.clock_synced != Some(true) || s.report.observer_findings_msg.iter().any(|m| m.code == "o_ntp") {
             all_ntp_synced = false;
@@ -758,7 +760,8 @@ pub fn build_pack(input: &SupportInput<'_>, opts: &SupportOpts) -> SupportPack {
         || wifi_only_corr
         || worst_signal.is_some_and(|s| s < -70.0)
         || max_retry_rate.is_some_and(|r| r >= 60.0);
-    let wifi_only_fault = !network_mismatch && has_wired && wired_healthy == wired_count && no_upstream_outages && wifi_symptoms;
+    // Mixed incidents are not upstream outages, but they say the cable failed too: not a Wi-Fi-only fault.
+    let wifi_only_fault = !network_mismatch && has_wired && wired_healthy == wired_count && no_upstream_outages && mixed_incidents == 0 && wifi_symptoms;
     let load_only_fault = total_net_incidents == 0 && total_load_incidents > 0 && !shared_or_line_corr;
     let rogue_dhcp = has_rogue_dhcp(input.sessions);
 
@@ -1085,6 +1088,8 @@ pub fn build_pack(input: &SupportInput<'_>, opts: &SupportOpts) -> SupportPack {
         i18n::headline_router_fault(lang).into()
     } else if dns_incidents > 0 {
         i18n::headline_dns_fault(lang).into()
+    } else if mixed_incidents > 0 {
+        i18n::headline_mixed(lang, mixed_incidents)
     } else {
         i18n::headline_healthy(lang).into()
     };

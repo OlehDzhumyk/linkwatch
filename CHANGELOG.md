@@ -2,6 +2,20 @@
 
 All notable changes to `linkwatch` are documented in this file.
 
+## [Unreleased]
+
+Behaviour changes for accuracy (docs/ARCHITECTURE.md, step R8). Golden snapshots change; see
+each item.
+
+### Changed
+- **Mixed layer verdict:** new verdict `mixed` (Mixed problem). `classify::verdict` returns it
+  when paths fail at different layers at the same time (for example Wi-Fi cannot reach the
+  router while the cable reaches it but not the internet), and when both Wi-Fi and a cable
+  fail next to a good path. Before, the first case gave `line_problem` and the second gave
+  `unknown`. Wi-Fi `LanDown` with a cable `IspDown` now gives `mixed`, not `line_problem`.
+  The verdict has English and Ukrainian text in the web UI, the advisor, the incident counts
+  line and the support pack. The headline ties go to the concrete layer, never to `mixed`.
+
 ## [0.12.0] - 2026-11-28
 
 Refactor to the target structure in `docs/ARCHITECTURE.md` (steps R0–R7). Reports, verdicts

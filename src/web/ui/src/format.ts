@@ -172,6 +172,7 @@ const VERDICT: { readonly [K in Verdict]: readonly [MsgKey, Tone] } = {
   line_problem: ["verdict.line_problem", "bad"],
   internet_problem: ["verdict.internet_problem", "bad"],
   dns: ["verdict.dns", "warn"],
+  mixed: ["verdict.mixed", "warn"],
   single_path: ["verdict.single_path", "neutral"],
   unknown: ["verdict.unknown", "neutral"],
 };

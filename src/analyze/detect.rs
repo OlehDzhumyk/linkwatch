@@ -203,9 +203,9 @@ pub(super) fn findings(r: &Report) -> Vec<Msg> {
     if total > 0 {
         let g = |k: &str| r.incidents.get(k).copied().unwrap_or(0);
         f.push(msg!("f_incidents",
-            "Of {total} network incidents (outages and micro-drops, merged across interfaces): {wifi} only on Wi-Fi (cable fine), {wired} only on cable, {router} router, {line} line/ISP, {inet} internet beyond the ISP, {dns} DNS, {single} not comparable (one path only), {unclear} unclear.",
+            "Of {total} network incidents (outages and micro-drops, merged across interfaces): {wifi} only on Wi-Fi (cable fine), {wired} only on cable, {router} router, {line} line/ISP, {inet} internet beyond the ISP, {dns} DNS, {mixed} paths failing at different points, {single} not comparable (one path only), {unclear} unclear.",
             total = total, wifi = g("wifi_problem"), wired = g("wired_problem"), router = g("router_problem"), line = g("line_problem"),
-            inet = g("internet_problem"), dns = g("dns"), single = g("single_path"), unclear = g("unknown") + g("all_ok")));
+            inet = g("internet_problem"), dns = g("dns"), mixed = g("mixed"), single = g("single_path"), unclear = g("unknown") + g("all_ok")));
     }
     if r.load_incidents > 0 {
         f.push(msg!(

@@ -32,7 +32,7 @@ For every configured or auto-detected physical interface (bound with `SO_BINDTOD
 ### Debouncing & Cross-Path Verdicts
 - Raw per-tick probes are recorded unconditionally (`samples-YYYYMMDD.jsonl`).
 - State transitions (`Ok`, `Degraded`, `LinkDown`, `NoIp`, `LanDown`, `IspDown`, `WanDown`, `DnsDown`) require the new state to hold for `classify.debounce_s` seconds (default `3.0`; converted to ticks with max(1, round(seconds / probe interval)), so it means the same on every profile; the old tick keys `debounce`/`window` are deprecated and used only when the seconds key is unset), eliminating single-packet jitter false alarms while preserving 1–2 s glitches as **micro-drops** in analysis.
-- Comparing active interfaces at the same timestamp produces a cross-path verdict (`AllOk`, `WifiProblem`, `WiredProblem`, `RouterProblem`, `LineProblem`, `InternetProblem`, `Dns`, `SinglePath`).
+- Comparing active interfaces at the same timestamp produces a cross-path verdict (`AllOk`, `WifiProblem`, `WiredProblem`, `RouterProblem`, `LineProblem`, `InternetProblem`, `Dns`, `Mixed`, `SinglePath`). `Mixed` means that paths fail at different layers at the same time.
 
 ### Measurement Profiles
 - `light`: 5 s tick interval for constrained boards.

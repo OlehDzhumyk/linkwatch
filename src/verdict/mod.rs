@@ -84,6 +84,7 @@ pub fn explain(verdict: Option<Verdict>, net_inc: u32, obs_inc: u32, wifi_signal
         Some(Verdict::LineProblem) => one("line", "All paths reached the router but failed at the ISP hop — issue is on the access line."),
         Some(Verdict::InternetProblem) => one("internet", "Local network and ISP hop answered, but external internet targets timed out."),
         Some(Verdict::Dns) => one("dns", "IP probes succeeded, but DNS name resolution failed."),
+        Some(Verdict::Mixed) => one("mixed", "Paths failed at different points at the same time — see the incidents for each path."),
         Some(Verdict::SinglePath) => {
             if net_inc == 0 {
                 one("single_clean", "Monitoring a single path cleanly (connect Ethernet alongside Wi-Fi to isolate Wi-Fi vs ISP faults).")
@@ -98,16 +99,18 @@ pub fn explain(verdict: Option<Verdict>, net_inc: u32, obs_inc: u32, wifi_signal
 /// The failing layer that most episodes name. See "Rule that runs today" above.
 fn dominant_cause(rep: &Report) -> Option<Verdict> {
     let mut counts: BTreeMap<usize, (Verdict, u32, f64)> = BTreeMap::new();
+    // Ties go to the later key, so the vaguest verdict has the lowest key.
     let key_of = |v: Verdict| match v {
-        Verdict::AllOk => 0,
-        Verdict::WifiProblem => 1,
-        Verdict::WiredProblem => 2,
-        Verdict::RouterProblem => 3,
-        Verdict::LineProblem => 4,
-        Verdict::InternetProblem => 5,
-        Verdict::Dns => 6,
-        Verdict::SinglePath => 7,
-        Verdict::Unknown => 8,
+        Verdict::Mixed => 0,
+        Verdict::AllOk => 1,
+        Verdict::WifiProblem => 2,
+        Verdict::WiredProblem => 3,
+        Verdict::RouterProblem => 4,
+        Verdict::LineProblem => 5,
+        Verdict::InternetProblem => 6,
+        Verdict::Dns => 7,
+        Verdict::SinglePath => 8,
+        Verdict::Unknown => 9,
     };
     for ep in &rep.episodes {
         if ep.origin == IncidentOrigin::Observer || is_load_provoked(ep) {
