@@ -2,6 +2,14 @@
 
 All notable changes to `linkwatch` are documented in this file.
 
+## [0.10.1] - 2026-11-28
+
+### Fixed
+- A package upgrade no longer starts a new session when only settings that do not change the
+  measurement differ (speed tests, web, alerts, advisor, new default sections). The session
+  continues and records a `config changed: …` note. A new probe interval, target, interface or
+  classifier setting still starts a new session.
+
 ## [0.10.0] - 2026-11-28
 
 ### Added

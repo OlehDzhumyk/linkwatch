@@ -162,14 +162,43 @@ pub fn resolve_ifaces(cfg: &Config) -> Vec<(String, IfaceRole)> {
 /// (reboot, package upgrade, crash) with the same point, label, note and configuration.
 const CONTINUE_WITHIN_S: i64 = 12 * 3600;
 
-/// Reuse the newest session with the same point/label/note/config when its last heartbeat is
-/// recent (restart after crash, reboot or upgrade), otherwise create a new one.
+/// Configuration parts that change what a sample means: which paths are probed, against what,
+/// how often, and how a tick becomes a state. Everything else (speed tests, web, alerts,
+/// advisor, router telemetry, new sections with defaults after an upgrade) may change without
+/// splitting a night into two sessions.
+const MEASUREMENT_KEYS: [&str; 7] = [
+    "/interfaces",
+    "/targets",
+    "/intervals/probe_ms",
+    "/intervals/probe_timeout_ms",
+    "/intervals/dns_s",
+    "/intervals/tcp_s",
+    "/classify",
+];
+
+/// True when two stored configurations measure the same way (see [`MEASUREMENT_KEYS`]).
+pub(super) fn same_measurement(a: &serde_json::Value, b: &serde_json::Value) -> bool {
+    MEASUREMENT_KEYS.iter().all(|k| a.pointer(k) == b.pointer(k))
+}
+
+/// Top-level configuration sections that differ (for the note in a continued session).
+pub(super) fn changed_sections(old: &serde_json::Value, new: &serde_json::Value) -> Vec<String> {
+    let (Some(o), Some(n)) = (old.as_object(), new.as_object()) else { return Vec::new() };
+    let mut keys: Vec<String> = o.keys().chain(n.keys()).filter(|k| o.get(*k) != n.get(*k)).cloned().collect();
+    keys.sort();
+    keys.dedup();
+    keys
+}
+
+/// Reuse the newest session with the same point/label/note and the same measurement settings
+/// when its last heartbeat is recent (restart after crash, reboot or upgrade), otherwise create
+/// a new one. The third value lists the configuration sections that changed in a reused session.
 fn choose_session(
     data_dir: &Path,
     params: &SessionRequest,
     new_session: bool,
     config: &serde_json::Value,
-) -> (String, Option<chrono::DateTime<chrono::Utc>>) {
+) -> (String, Option<chrono::DateTime<chrono::Utc>>, Vec<String>) {
     let now = chrono::Utc::now();
     let mut sessions = store::read::sessions(data_dir);
     sessions.sort_by_key(|s| std::cmp::Reverse(s.1.started));
@@ -181,9 +210,9 @@ fn choose_session(
                 && meta.point == params.point
                 && meta.label == params.label
                 && meta.note == params.note
-                && &meta.config == config
+                && same_measurement(&meta.config, config)
             {
-                return (meta.session.clone(), Some(meta.started));
+                return (meta.session.clone(), Some(meta.started), changed_sections(&meta.config, config));
             }
         }
     let mut id = now.format("%Y%m%dT%H%M%SZ").to_string();
@@ -199,7 +228,7 @@ fn choose_session(
         n += 1;
         id = format!("{base}-{n}");
     }
-    (id, None)
+    (id, None, Vec::new())
 }
 
 /// Parts that live as long as the process; sessions come and go inside.
@@ -350,7 +379,7 @@ async fn run_session(
 ) -> anyhow::Result<SessionEnd> {
     let cfg = &p.cfg;
     let live = &p.live;
-    let (session, started) = choose_session(&cfg.data_dir, params, new_session, &p.config_json);
+    let (session, started, config_changes) = choose_session(&cfg.data_dir, params, new_session, &p.config_json);
     let init_fp = initial_fingerprint(&p.ifaces, cfg);
     let meta = SessionMeta {
         v: SCHEMA_VERSION,
@@ -393,6 +422,10 @@ async fn run_session(
     }));
     if let Some(g) = info.gap_s {
         warn!(gap_s = g, "previous run of this session stopped; gap recorded");
+    }
+    if !config_changes.is_empty() {
+        info!(sections = ?config_changes, "session continued with changed settings that do not affect the measurement");
+        store.send(Record::Event(EventKind::Note { text: format!("config changed: {}", config_changes.join(", ")) }));
     }
 
     let (stop_tx, stop_rx_tasks) = watch::channel(false);

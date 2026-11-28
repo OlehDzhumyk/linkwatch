@@ -142,3 +142,20 @@ async fn restart_continues_the_switched_session() {
     stop_tx.send("test").await.unwrap();
     run.await.unwrap().unwrap();
 }
+
+#[test]
+fn upgrade_defaults_do_not_split_a_session() {
+    use serde_json::json;
+    let old = json!({"interfaces": [{"name": "wlo1"}], "targets": {"internet": ["1.1.1.1"]}, "intervals": {"probe_ms": 1000, "host_s": 10}, "classify": {"debounce": 3}, "speed": {"interval_min": 60}});
+    // New package: lighter speed tests, a new [advisor] section, another host interval.
+    let new = json!({"interfaces": [{"name": "wlo1"}], "targets": {"internet": ["1.1.1.1"]}, "intervals": {"probe_ms": 1000, "host_s": 30}, "classify": {"debounce": 3}, "speed": {"interval_min": 360}, "advisor": {"accept": []}});
+    assert!(super::same_measurement(&old, &new));
+    assert_eq!(super::changed_sections(&old, &new), ["advisor", "intervals", "speed"]);
+    // A different probe interval or target changes what a sample means.
+    let mut faster = new.clone();
+    faster["intervals"]["probe_ms"] = json!(500);
+    assert!(!super::same_measurement(&old, &faster));
+    let mut other = new.clone();
+    other["targets"]["internet"] = json!(["9.9.9.9"]);
+    assert!(!super::same_measurement(&old, &other));
+}
