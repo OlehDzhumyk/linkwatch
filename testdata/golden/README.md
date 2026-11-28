@@ -1,14 +1,20 @@
 # Golden sessions
 
 Each subdirectory with an `expect.json` is a recorded session. The test
-`analyze::golden_tests` runs the real analyzer on it and compares a short summary
-with `expect.json`: episodes per interface, network/observer/load incident counts,
-and for every episode `(iface, start, duration_s, cause, origin, attribution)`.
+`analyze::golden_tests` runs the real analyzer on it and compares two files:
+
+- `expect.json`: a short summary for review. Episodes per interface, incident counts,
+  causes, the Observer Trust level, session-wide blinds, and for every episode
+  `(iface, start, end, duration_s, state, cause, origin, attribution, confidence, blinded)`.
+- `snapshot.json`: the whole report, floats rounded to 4 decimals. It is the safety net for
+  refactors (docs/ARCHITECTURE.md, R0): a refactor step must not change it.
+
+The `-reclassified` variants hold the same views with `--reclassify`.
 
 A change in the classifier or analyzer that changes a verdict on a real night
 then shows up as a diff of `expect.json` in review.
 
-The test skips quietly when this directory has no fixture.
+The test fails when no fixture with `expect.json` runs.
 
 ## Privacy rule
 
@@ -37,6 +43,7 @@ Git ignores `testdata/golden/local-*/`. The test still runs them on your machine
    ```
 
 5. Read the diff of `expect.json`. Check that each episode makes sense for that night.
+   A diff only in `snapshot.json` means an output field changed: find out which one.
 6. Commit the directory.
 
 ## Update expectations

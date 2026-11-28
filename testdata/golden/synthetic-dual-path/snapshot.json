@@ -1,0 +1,332 @@
+{
+  "anomalies": [],
+  "causes": {
+    "line_problem": 2,
+    "wifi_problem": 1
+  },
+  "episodes": [
+    {
+      "cause": "wifi_problem",
+      "context": [],
+      "duration_s": 10.0,
+      "end": "2026-01-15T10:01:50Z",
+      "finding": {
+        "attribution": "network",
+        "confidence": "medium",
+        "evidence": [],
+        "host_s": 0.0,
+        "network_s": 10.0
+      },
+      "iface": "wlo1",
+      "origin": "network",
+      "role": "wifi",
+      "speedtest_active": false,
+      "start": "2026-01-15T10:01:40Z",
+      "state": "lan_down",
+      "ticks": 10
+    },
+    {
+      "cause": "line_problem",
+      "context": [],
+      "duration_s": 20.0,
+      "end": "2026-01-15T10:05:20Z",
+      "finding": {
+        "attribution": "network",
+        "confidence": "high",
+        "evidence": [
+          {
+            "explains_s": 0.0,
+            "host": false,
+            "msg": {
+              "args": {
+                "ifs": "eth0"
+              },
+              "code": "a_other_path",
+              "text": "eth0 failed at the same time."
+            }
+          }
+        ],
+        "host_s": 0.0,
+        "network_s": 20.0
+      },
+      "iface": "wlo1",
+      "origin": "network",
+      "role": "wifi",
+      "speedtest_active": false,
+      "start": "2026-01-15T10:05:00Z",
+      "state": "isp_down",
+      "ticks": 20
+    },
+    {
+      "cause": "line_problem",
+      "context": [],
+      "duration_s": 20.0,
+      "end": "2026-01-15T10:05:20Z",
+      "finding": {
+        "attribution": "network",
+        "confidence": "high",
+        "evidence": [
+          {
+            "explains_s": 0.0,
+            "host": false,
+            "msg": {
+              "args": {
+                "ifs": "wlo1"
+              },
+              "code": "a_other_path",
+              "text": "wlo1 failed at the same time."
+            }
+          }
+        ],
+        "host_s": 0.0,
+        "network_s": 20.0
+      },
+      "iface": "eth0",
+      "origin": "network",
+      "role": "ethernet",
+      "speedtest_active": false,
+      "start": "2026-01-15T10:05:00Z",
+      "state": "isp_down",
+      "ticks": 20
+    },
+    {
+      "cause": "wifi_problem",
+      "context": [
+        "monitor's own speed test was running",
+        "speed test running nearby"
+      ],
+      "context_msg": [
+        {
+          "args": {},
+          "code": "c_own_speed",
+          "text": "monitor's own speed test was running"
+        },
+        {
+          "args": {},
+          "code": "c_speedtest",
+          "text": "speed test running nearby"
+        }
+      ],
+      "duration_s": 7.0,
+      "end": "2026-01-15T10:07:42Z",
+      "finding": {
+        "attribution": "observer_confirmed",
+        "confidence": "high",
+        "evidence": [
+          {
+            "explains_s": 7.0,
+            "host": true,
+            "msg": {
+              "args": {
+                "s": "7"
+              },
+              "code": "a_speed_test",
+              "text": "Own speed test during the outage: explains up to 7 s."
+            },
+            "suspect": "speed_test"
+          }
+        ],
+        "flip": {
+          "args": {},
+          "code": "a_flip_router_log",
+          "text": "If the router log showed an event at this time, this would be a network fault."
+        },
+        "host_s": 7.0,
+        "main_suspect": "speed_test",
+        "network_s": 0.0
+      },
+      "iface": "wlo1",
+      "origin": "observer",
+      "role": "wifi",
+      "speedtest_active": true,
+      "start": "2026-01-15T10:07:35Z",
+      "state": "lan_down",
+      "ticks": 7
+    }
+  ],
+  "findings": [
+    "eth0 (ethernet): available 96.667%, 1 outages, 0 micro-drops, longest 20s, router RTT 1.0 ms, internet RTT 15.0 ms",
+    "wlo1 (wifi): available 94.941%, 2 outages, 0 micro-drops, longest 20s, router RTT 3.0 ms, internet RTT 15.0 ms",
+    "Observer: 1 incident(s) attributed to the observer device (scan/overrun/suspend/throttling) and excluded from network totals.",
+    "Of 2 network incidents (outages and micro-drops, merged across interfaces): 1 only on Wi-Fi (cable fine), 0 only on cable, 0 router, 1 line/ISP, 0 internet beyond the ISP, 0 DNS, 0 not comparable (one path only), 0 unclear."
+  ],
+  "findings_msg": [
+    {
+      "args": {
+        "avail": "96.667",
+        "ep": "1",
+        "gw": "1.0",
+        "iface": "eth0",
+        "longest": "20",
+        "micro": "0",
+        "net": "15.0",
+        "role": "ethernet"
+      },
+      "code": "f_iface",
+      "text": "eth0 (ethernet): available 96.667%, 1 outages, 0 micro-drops, longest 20s, router RTT 1.0 ms, internet RTT 15.0 ms"
+    },
+    {
+      "args": {
+        "avail": "94.941",
+        "ep": "2",
+        "gw": "3.0",
+        "iface": "wlo1",
+        "longest": "20",
+        "micro": "0",
+        "net": "15.0",
+        "role": "wifi"
+      },
+      "code": "f_iface",
+      "text": "wlo1 (wifi): available 94.941%, 2 outages, 0 micro-drops, longest 20s, router RTT 3.0 ms, internet RTT 15.0 ms"
+    },
+    {
+      "args": {
+        "n": "1"
+      },
+      "code": "o_incidents",
+      "text": "Observer: 1 incident(s) attributed to the observer device (scan/overrun/suspend/throttling) and excluded from network totals."
+    },
+    {
+      "args": {
+        "dns": "0",
+        "inet": "0",
+        "line": "1",
+        "router": "0",
+        "single": "0",
+        "total": "2",
+        "unclear": "0",
+        "wifi": "1",
+        "wired": "0"
+      },
+      "code": "f_incidents",
+      "text": "Of 2 network incidents (outages and micro-drops, merged across interfaces): 1 only on Wi-Fi (cable fine), 0 only on cable, 0 router, 1 line/ISP, 0 internet beyond the ISP, 0 DNS, 0 not comparable (one path only), 0 unclear."
+    }
+  ],
+  "from": "2026-01-15T10:00:00Z",
+  "hours": 0.1664,
+  "ifaces": [
+    {
+      "availability_pct": 96.6667,
+      "beacon_loss_total": 0,
+      "busy_med": null,
+      "down_s": 20.0,
+      "episodes": 1,
+      "gw_rtt_med": 1.0,
+      "had_link": true,
+      "hours": [
+        {
+          "episodes": 1,
+          "gw_rtt_med": 1.0,
+          "gw_rtt_p95": 1.0,
+          "hour": 10,
+          "loss_pct": 3.3333,
+          "micro_drops": 0,
+          "net_rtt_med": 15.0,
+          "net_rtt_p95": 15.0,
+          "ticks": 600
+        }
+      ],
+      "iface": "eth0",
+      "loaded_gw_rtt_med": 1.0,
+      "loaded_net_rtt_med": 15.0,
+      "longest_s": 20.0,
+      "micro_drops": 0,
+      "net_rtt_med": 15.0,
+      "no_link_ticks": 0,
+      "offpeak_net_rtt_p95": 15.0,
+      "reconnects": 0,
+      "roams": 0,
+      "role": "ethernet",
+      "self_traffic_s": 0.0,
+      "self_traffic_stalls": 0,
+      "signal_med": null,
+      "speed_med_mbps": null,
+      "speed_peak_med_mbps": null,
+      "speed_tests": 0,
+      "stalls": 0,
+      "ticks": 600,
+      "tx_failed_total": 0,
+      "wifi_airtime_congestion_stalls": 0
+    },
+    {
+      "availability_pct": 94.941,
+      "beacon_loss_total": 0,
+      "busy_med": null,
+      "down_s": 30.0,
+      "episodes": 2,
+      "gw_rtt_med": 3.0,
+      "had_link": true,
+      "hours": [
+        {
+          "episodes": 2,
+          "gw_rtt_med": 3.0,
+          "gw_rtt_p95": 3.0,
+          "hour": 10,
+          "loss_pct": 5.059,
+          "micro_drops": 0,
+          "net_rtt_med": 15.0,
+          "net_rtt_p95": 15.0,
+          "ticks": 593
+        }
+      ],
+      "iface": "wlo1",
+      "loaded_gw_rtt_med": 3.0,
+      "loaded_net_rtt_med": 15.0,
+      "longest_s": 20.0,
+      "micro_drops": 0,
+      "net_rtt_med": 15.0,
+      "no_link_ticks": 0,
+      "offpeak_net_rtt_p95": 15.0,
+      "reconnects": 0,
+      "roams": 0,
+      "role": "wifi",
+      "self_traffic_s": 0.0,
+      "self_traffic_stalls": 0,
+      "signal_med": null,
+      "speed_med_mbps": 2.0,
+      "speed_peak_med_mbps": null,
+      "speed_tests": 1,
+      "stalls": 0,
+      "ticks": 593,
+      "tx_failed_total": 0,
+      "wifi_airtime_congestion_stalls": 0
+    }
+  ],
+  "incidents": {
+    "line_problem": 1,
+    "wifi_problem": 1
+  },
+  "load_incidents": 0,
+  "micro_max_s": 2.5,
+  "monitor_gaps": [],
+  "network_incidents": 2,
+  "observer_findings": [
+    "1 incident(s) attributed to the observer device (scan/overrun/suspend/throttling) and excluded from network totals."
+  ],
+  "observer_findings_msg": [
+    {
+      "args": {
+        "n": "1"
+      },
+      "code": "o_incidents",
+      "text": "1 incident(s) attributed to the observer device (scan/overrun/suspend/throttling) and excluded from network totals."
+    }
+  ],
+  "observer_incidents": 1,
+  "observer_trust": {
+    "level": "caution",
+    "reasons": [
+      {
+        "args": {
+          "n": "1"
+        },
+        "code": "t_observer_incidents",
+        "text": "1 incident(s) were caused by the measuring device and are excluded."
+      }
+    ]
+  },
+  "patterns": [],
+  "router_log_matches": [],
+  "tick_s": 1.0,
+  "to": "2026-01-15T10:09:59Z"
+}

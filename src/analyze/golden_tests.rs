@@ -2,6 +2,8 @@
 //! compare a small summary with the committed `expect.json`.
 //! A second, optional file `expect-reclassified.json` holds the summary of the same session with
 //! `--reclassify` (recorded states recomputed by the current classifier).
+//! Next to each summary, `snapshot.json` / `snapshot-reclassified.json` hold the whole `Report`
+//! (floats rounded), so a refactor that changes any output field fails (docs/ARCHITECTURE.md R0).
 //! Set `LINKWATCH_UPDATE_GOLDEN=1` to rewrite the expectation files.
 
 use super::*;
@@ -47,9 +49,13 @@ fn summarize(r: &Report) -> Value {
                 "iface": e.iface,
                 "start": e.start.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
                 "duration_s": e.duration_s.round() as i64,
+                "end": e.end.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+                "state": to_json(&e.state),
                 "cause": to_json(&e.cause),
                 "origin": to_json(&e.origin),
                 "attribution": to_json(&e.finding.attribution),
+                "confidence": to_json(&e.finding.confidence),
+                "blinded": e.finding.blinded.iter().map(|b| to_json(&b.element)).collect::<Vec<_>>(),
             })
         })
         .collect();
@@ -58,8 +64,29 @@ fn summarize(r: &Report) -> Value {
         "network_incidents": r.network_incidents,
         "observer_incidents": r.observer_incidents,
         "load_incidents": r.load_incidents,
+        "causes": r.causes,
+        "incidents": r.incidents,
+        "observer_trust": to_json(&r.observer_trust.level),
+        "session_blinds": r.session_blinds.iter().map(|b| json!({"element": to_json(&b.element), "by": to_json(&b.by)})).collect::<Vec<_>>(),
         "episodes": episodes,
     })
+}
+
+/// The whole report as JSON, with every float rounded to 4 decimals: a pure refactor may
+/// reorder float sums, which must not fail the test.
+fn snapshot(r: &Report) -> Value {
+    fn round(v: Value) -> Value {
+        match v {
+            Value::Number(n) if n.is_f64() => {
+                let x = n.as_f64().unwrap_or_default();
+                json!((x * 1e4).round() / 1e4)
+            }
+            Value::Array(a) => Value::Array(a.into_iter().map(round).collect()),
+            Value::Object(o) => Value::Object(o.into_iter().map(|(k, v)| (k, round(v))).collect()),
+            other => other,
+        }
+    }
+    round(to_json(r))
 }
 
 /// Line diff of two pretty-printed JSON documents (`-` expected, `+` actual).
@@ -67,9 +94,15 @@ fn diff(expected: &str, actual: &str) -> String {
     let e: Vec<&str> = expected.lines().collect();
     let a: Vec<&str> = actual.lines().collect();
     let mut out = String::new();
+    let mut shown = 0;
     for i in 0..e.len().max(a.len()) {
         let (le, la) = (e.get(i).copied(), a.get(i).copied());
         if le != la {
+            shown += 1;
+            if shown > 40 {
+                out.push_str("... (more lines differ)\n");
+                break;
+            }
             if let Some(l) = le {
                 out.push_str(&format!("line {:>3} - {l}\n", i + 1));
             }
@@ -99,12 +132,23 @@ fn golden_sessions_match_expectations() {
         checked += 1;
         let name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let reclass_path = dir.join("expect-reclassified.json");
-        for (path, reclassify, file) in [(&expect_path, false, "expect.json"), (&reclass_path, true, "expect-reclassified.json")] {
-            // expect-reclassified.json is optional: update mode writes it, other modes compare it when present.
-            if reclassify && !update && !path.exists() {
+        let snap_path = dir.join("snapshot.json");
+        let snap_reclass_path = dir.join("snapshot-reclassified.json");
+        let checks: [(&PathBuf, bool, &str, fn(&Report) -> Value); 4] = [
+            (&expect_path, false, "expect.json", summarize),
+            (&reclass_path, true, "expect-reclassified.json", summarize),
+            (&snap_path, false, "snapshot.json", snapshot),
+            (&snap_reclass_path, true, "snapshot-reclassified.json", snapshot),
+        ];
+        let plain = analyze_dir_with(&dir, false);
+        let reclassified = analyze_dir_with(&dir, true);
+        for (path, reclassify, file, view) in checks {
+            // Files other than expect.json are optional: update mode writes them, other modes compare them when present.
+            if *path != expect_path && !update && !path.exists() {
                 continue;
             }
-            let mut actual = serde_json::to_string_pretty(&summarize(&analyze_dir_with(&dir, reclassify))).unwrap_or_default();
+            let rep = if reclassify { &reclassified } else { &plain };
+            let mut actual = serde_json::to_string_pretty(&view(rep)).unwrap_or_default();
             actual.push('\n');
             if update {
                 std::fs::write(path, &actual).unwrap_or_else(|e| panic!("write {file}: {e}"));

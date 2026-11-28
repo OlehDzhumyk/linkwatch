@@ -1,43 +1,69 @@
 {
+  "causes": {
+    "internet_problem": 2,
+    "wifi_problem": 1
+  },
   "episodes": [
     {
       "attribution": "network",
+      "blinded": [],
       "cause": "wifi_problem",
+      "confidence": "medium",
       "duration_s": 10,
+      "end": "2026-01-15T10:01:50Z",
       "iface": "wlo1",
       "origin": "network",
-      "start": "2026-01-15T10:01:40Z"
+      "start": "2026-01-15T10:01:40Z",
+      "state": "lan_down"
     },
     {
       "attribution": "network",
+      "blinded": [],
       "cause": "internet_problem",
+      "confidence": "high",
       "duration_s": 20,
+      "end": "2026-01-15T10:05:20Z",
       "iface": "wlo1",
       "origin": "network",
-      "start": "2026-01-15T10:05:00Z"
+      "start": "2026-01-15T10:05:00Z",
+      "state": "wan_down"
     },
     {
       "attribution": "network",
+      "blinded": [],
       "cause": "internet_problem",
+      "confidence": "high",
       "duration_s": 20,
+      "end": "2026-01-15T10:05:20Z",
       "iface": "eth0",
       "origin": "network",
-      "start": "2026-01-15T10:05:00Z"
+      "start": "2026-01-15T10:05:00Z",
+      "state": "wan_down"
     },
     {
       "attribution": "observer_confirmed",
+      "blinded": [],
       "cause": "wifi_problem",
+      "confidence": "high",
       "duration_s": 7,
+      "end": "2026-01-15T10:07:42Z",
       "iface": "wlo1",
       "origin": "observer",
-      "start": "2026-01-15T10:07:35Z"
+      "start": "2026-01-15T10:07:35Z",
+      "state": "lan_down"
     }
   ],
   "episodes_per_iface": {
     "eth0": 1,
     "wlo1": 3
   },
+  "incidents": {
+    "internet_problem": 1,
+    "wifi_problem": 1
+  },
   "load_incidents": 0,
   "network_incidents": 2,
-  "observer_incidents": 1
+  "observer_incidents": 1,
+  "observer_trust": "caution",
+  "session_blinds": []
 }
