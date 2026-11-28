@@ -47,8 +47,8 @@ pub(super) fn routes() -> Router<AppState> {
         .route("/api/report/export", get(report_export))
         .route("/api/compare", get(compare_sessions))
         .route("/api/support-report", get(support_report))
-        .route("/api/sessions/:id/summary", get(session_summary))
-        .route("/api/sessions/:id/events", get(session_events))
+        .route("/api/sessions/{id}/summary", get(session_summary))
+        .route("/api/sessions/{id}/events", get(session_events))
         .route("/api/live", get(live_sse))
         .route("/api/plan", get(plan))
         .route("/api/control", get(control_get))
@@ -136,7 +136,7 @@ pub(crate) struct EventsResponse<'a> {
     pub events: Vec<&'a Envelope>,
 }
 
-/// `GET /api/sessions/:id/events`: newest first.
+/// `GET /api/sessions/{id}/events`: newest first.
 #[derive(Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub(crate) struct SessionEventsResponse {

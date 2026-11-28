@@ -320,7 +320,10 @@ pub fn parse_digest_challenge(header_val: &str) -> Option<HashMap<String, String
 }
 
 fn md5_hex(s: &str) -> String {
-    format!("{:x}", Md5::digest(s.as_bytes()))
+    Md5::digest(s.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 pub fn digest_auth_header(
