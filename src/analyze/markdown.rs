@@ -157,7 +157,7 @@ fn attribution_cell(f: &attribution::Finding) -> String {
     let mut out = snake(&f.attribution);
     match f.attribution {
         A::Mixed => out.push_str(&format!(" (host {:.0} s)", f.host_s)),
-        A::Network | A::NetworkDespiteHost => out.push_str(&format!(" ({})", snake(&f.confidence))),
+        A::Network | A::NetworkDespiteHost | A::Inconclusive => out.push_str(&format!(" ({})", snake(&f.confidence))),
         A::ObserverLikely | A::ObserverConfirmed => {}
     }
     if let Some(c) = f.network_causes.first() {

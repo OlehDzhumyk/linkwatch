@@ -45,6 +45,7 @@ const ATTR_KEY = {
     mixed: "report.attr.mixed",
     observer_likely: "report.attr.observer_likely",
     observer_confirmed: "report.attr.observer_confirmed",
+    inconclusive: "report.attr.inconclusive",
 };
 const CONF_KEY = {
     low: "report.conf.low",
@@ -172,6 +173,8 @@ export function episodeRow(ep, withContext = true, live = false) {
         const cause = fin.network_causes?.[0];
         if (cause)
             ctx.push(el("span", { class: "inc-ctx inc-cause", text: t(NCAUSE_KEY[cause]) }));
+        for (const b of fin.blinded?.slice(0, 1) ?? [])
+            ctx.push(el("span", { class: "inc-ctx inc-blind", text: tMsg(b.msg) }));
         for (const e of fin.evidence.slice(0, 3))
             ctx.push(el("span", { class: "inc-ctx inc-evid", text: tMsg(e.msg) }));
         if (fin.flip)

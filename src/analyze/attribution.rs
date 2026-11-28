@@ -65,6 +65,10 @@ pub enum Attribution {
     ObserverLikely,
     /// A strong or certain host effect covers the outage and nothing contradicts it.
     ObserverConfirmed,
+    /// A condition blinds the element the verdict would blame (router or line) and no
+    /// independent path or log sees past it (section 10, M1/M3). Counted as a network incident
+    /// with low confidence.
+    Inconclusive,
 }
 
 impl Attribution {
@@ -128,6 +132,39 @@ pub enum NetworkCause {
     BusyChannel,
 }
 
+/// A network element a masking condition can hide from this incident (section 10).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+#[serde(rename_all = "snake_case")]
+pub enum Element {
+    /// The home router (everything behind the Wi-Fi access point).
+    Router,
+    /// The internet line (modem, cable, DSL).
+    Line,
+}
+
+/// The condition that hides an element.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+#[serde(rename_all = "snake_case")]
+pub enum BlindCause {
+    /// The Wi-Fi channel was very busy.
+    BusyChannel,
+    /// The Wi-Fi signal was weak.
+    WeakSignal,
+    /// The session clock was not synchronized, so router log lines cannot be matched.
+    ClockUnsynced,
+}
+
+/// One element this incident cannot judge, and why.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct Blind {
+    pub element: Element,
+    pub by: BlindCause,
+    pub msg: Msg,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Strength {
     Weak,
@@ -179,6 +216,8 @@ pub struct IncidentFacts {
     pub signal_dbm: Option<f64>,
     /// Median channel busy (%) around the incident.
     pub busy_pct: Option<f64>,
+    /// The session clock was not synchronized: router log lines cannot be matched in time.
+    pub clock_unsynced: bool,
 }
 
 impl IncidentFacts {
@@ -212,6 +251,7 @@ impl IncidentFacts {
             no_ip: false,
             signal_dbm: None,
             busy_pct: None,
+            clock_unsynced: false,
         }
     }
 }
@@ -250,6 +290,9 @@ pub struct Finding {
     /// Likely network causes, strongest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub network_causes: Vec<NetworkCause>,
+    /// Elements this incident cannot judge (section 10).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blinded: Vec<Blind>,
 }
 
 struct Candidate {
@@ -341,7 +384,56 @@ fn suspect_msg(s: Suspect, explains_s: f64) -> Msg {
     }
 }
 
+/// Section 10 (masking, phase 1): which elements this incident cannot judge. An independent
+/// path or a trusted router log unblinds; a condition below its threshold never blinds.
+fn apply_masking(f: &IncidentFacts, r: &mut Finding) {
+    if r.attribution.is_observer() {
+        return;
+    }
+    let wifi = f.role == IfaceRole::Wifi;
+    let trusted_router_hit = f.router_hit && !f.clock_unsynced;
+    let independent = f.comparable_paths > 0
+        || !f.other_failed.is_empty()
+        || trusted_router_hit
+        || f.router_reboot_near
+        || f.router_wan_down_near
+        || (wifi && (f.ap_disconnect || f.channel_switch_near));
+    if f.router_hit && f.clock_unsynced {
+        r.blinded.push(Blind {
+            element: Element::Line,
+            by: BlindCause::ClockUnsynced,
+            msg: crate::msg!("b_clock_unsynced", "The host clock was not synchronized: a router log line near this time was not used as evidence."),
+        });
+    }
+    let cause = if !wifi || independent {
+        None
+    } else if let Some(b) = f.busy_pct.filter(|b| *b >= limits::BUSY_CHANNEL_PCT) {
+        Some((BlindCause::BusyChannel, crate::msg!("b_busy_channel", "The Wi-Fi channel was {pct}% busy: this drop cannot show whether the router or the line failed.", pct = format!("{b:.0}"))))
+    } else {
+        f.signal_dbm.filter(|s| *s <= limits::WEAK_SIGNAL_DBM).map(|s| {
+            (BlindCause::WeakSignal, crate::msg!("b_weak_signal", "The Wi-Fi signal was weak ({dbm} dBm): this drop cannot show whether the router or the line failed.", dbm = format!("{s:.0}")))
+        })
+    };
+    if let Some((by, msg)) = cause {
+        for element in [Element::Router, Element::Line] {
+            r.blinded.push(Blind { element, by, msg: msg.clone() });
+        }
+        if matches!(r.attribution, Attribution::Network | Attribution::NetworkDespiteHost) {
+            r.attribution = Attribution::Inconclusive;
+            r.confidence = Confidence::Low;
+            r.flip = Some(crate::msg!("a_flip_inconclusive", "A second path (for example Ethernet) or the router log would show whether the router or the line failed."));
+        }
+    }
+}
+
 pub fn attribute(f: &IncidentFacts) -> Finding {
+    let mut r = attribute_core(f);
+    apply_masking(f, &mut r);
+    r
+}
+
+fn attribute_core(f: &IncidentFacts) -> Finding {
+    let router_hit = f.router_hit && !f.clock_unsynced;
     let t = f.tick_s.max(limits::MIN_TICK_S);
     let d = f.duration_s.max(t);
     let (cands, mut evidence) = candidates(f);
@@ -385,7 +477,7 @@ pub fn attribute(f: &IncidentFacts) -> Finding {
         let names: Vec<&str> = f.other_failed.iter().map(|o| o.iface.as_str()).collect();
         evidence.push(Evidence { suspect: None, explains_s: 0.0, host: false, msg: crate::msg!("a_other_path", "{ifs} failed at the same time.", ifs = names.join(", ")) });
     }
-    if f.router_hit {
+    if router_hit {
         causes.insert(0, NetworkCause::RouterLog);
         evidence.push(Evidence { suspect: None, explains_s: 0.0, host: false, msg: crate::msg!("a_router_log", "The router log has an event at this time.") });
     }
@@ -395,7 +487,7 @@ pub fn attribute(f: &IncidentFacts) -> Finding {
         evidence.push(Evidence { suspect: None, explains_s: 0.0, host: false, msg: crate::msg!("a_ap_disconnect", "The access point disconnected this device (or the association timed out).") });
     }
     // Independent of the host: the router or the AP acted, or the cable dropped.
-    let router_side = f.router_hit || f.router_reboot_near || f.router_wan_down_near;
+    let router_side = router_hit || f.router_reboot_near || f.router_wan_down_near;
     let ap_side = wifi && (f.ap_disconnect || f.channel_switch_near);
     let cable_side = !wifi && f.carrier_loss_near;
     let confidence = if !f.other_failed.is_empty() || router_side || ap_side || cable_side {
@@ -432,7 +524,7 @@ pub fn attribute(f: &IncidentFacts) -> Finding {
         // Only a single path with nothing independent needs the hint; a healthy second path
         // already makes the network result plausible.
         let flip = (confidence == Confidence::Low).then(|| crate::msg!("a_flip_unconfirmed", "Nothing independent confirms it: a second path or the router log would make this certain."));
-        return Finding { attribution: Attribution::Network, confidence, host_s: 0.0, network_s: d, main_suspect: None, evidence, flip, network_causes: causes };
+        return Finding { attribution: Attribution::Network, confidence, host_s: 0.0, network_s: d, main_suspect: None, evidence, flip, network_causes: causes, blinded: Vec::new() };
     };
     // Only suspects that independent evidence does not contradict count towards `host_s`.
     let ok_s = cands.iter().filter(|c| !contradicted(c)).map(|c| c.explains_s).fold(0.0, f64::max).min(d);
@@ -461,7 +553,7 @@ pub fn attribute(f: &IncidentFacts) -> Finding {
         attribution = Attribution::NetworkDespiteHost;
     }
     let (host_s, network_s) = match attribution {
-        Attribution::Network | Attribution::NetworkDespiteHost => (host_s, d),
+        Attribution::Network | Attribution::NetworkDespiteHost | Attribution::Inconclusive => (host_s, d),
         // A load incident: our speed test provoked it, but the network really failed under
         // that load, so the whole outage also counts for the network.
         Attribution::Mixed if load_incident => (host_s, d),
@@ -475,7 +567,7 @@ pub fn attribute(f: &IncidentFacts) -> Finding {
             crate::msg!("a_flip_router_log", "If the router log showed an event at this time, this would be a network fault.")
         }),
         Attribution::Mixed => Some(crate::msg!("a_flip_mixed", "Without the host effect the outage would still last about {s} s.", s = secs(network_s))),
-        Attribution::NetworkDespiteHost | Attribution::Network => None,
+        Attribution::NetworkDespiteHost | Attribution::Network | Attribution::Inconclusive => None,
     };
     let confidence = if attribution.is_observer() {
         // The main suspect is not contradicted here. Strong or confirmed and covering the whole
@@ -493,5 +585,5 @@ pub fn attribute(f: &IncidentFacts) -> Finding {
         confidence
     };
     let network_causes = if attribution.is_observer() { Vec::new() } else { causes };
-    Finding { attribution, confidence, host_s, network_s, main_suspect: Some(main.suspect), evidence, flip, network_causes }
+    Finding { attribution, confidence, host_s, network_s, main_suspect: Some(main.suspect), evidence, flip, network_causes, blinded: Vec::new() }
 }

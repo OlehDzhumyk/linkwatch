@@ -594,6 +594,7 @@ impl Analyzer {
                 no_ip: false,
                 signal_dbm: None,
                 busy_pct: None,
+                clock_unsynced: self.host_clock_unsynced,
             };
             let ev_near = |s: i64, e: i64, pred: &dyn Fn(&EventKind) -> bool| {
                 self.events.iter().any(|(t, ev)| *t >= ep.start - Duration::seconds(s) && *t <= ep.end + Duration::seconds(e) && pred(ev))
