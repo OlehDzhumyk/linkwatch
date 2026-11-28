@@ -2,7 +2,8 @@
 # The checks of .github/workflows/ci.yml (jobs "test" and "ui") on any Linux host with Rust
 # (clippy) and Node. Use it while the repository has no GitHub remote, or before a push.
 #   scripts/ci.sh            # in the source tree
-#   scripts/ci.sh --docker   # in a container (IMAGE=..., default deskd-dev-check:latest)
+#   scripts/ci.sh --docker   # in a container (IMAGE=..., default deskd-dev-check:latest;
+#                            # TARGET_VOLUME=..., default lw-target-ci: its own build cache)
 # A copy of the tree is checked, so generated files never change your working copy; the
 # check fails when committed TypeScript bindings or the compiled UI are not current.
 set -eu
@@ -10,7 +11,7 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 
 if [ "${1:-}" = "--docker" ]; then
   image=${IMAGE:-deskd-dev-check:latest}
-  exec docker run --rm -v "$root:/repo:ro" -v lw-target:/target -v lw-cargo:/root/.cargo/registry \
+  exec docker run --rm -v "$root:/repo:ro" -v "${TARGET_VOLUME:-lw-target-ci}:/target" -v lw-cargo:/root/.cargo/registry \
     -e CARGO_TARGET_DIR=/target "$image" sh /repo/scripts/ci.sh --in-copy
 fi
 

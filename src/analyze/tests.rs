@@ -862,3 +862,21 @@ fn short_power_save_is_caution_not_polluted() {
     let long = observer_trust(&TrustInputs { power_save_ifaces: vec!["wlo1".into()], power_save_pct: Some(40.0), host_samples: 100, ..Default::default() });
     assert_eq!(long.level, TrustLevel::Polluted, "{long:?}");
 }
+
+#[test]
+fn tie_between_states_picks_the_nearest_failure() {
+    // One episode: 1 tick internet down, 1 tick gateway down (merged by the gap rule).
+    let t0 = DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+    let mut a = Analyzer::new(Opts::default());
+    for i in 0..60 {
+        let st = match i {
+            30 => PathState::WanDown,
+            32 => PathState::LanDown,
+            _ => PathState::Ok,
+        };
+        a.push(&env(t0 + Duration::seconds(i), samp("wlo1", IfaceRole::Wifi, st, 3.0)));
+    }
+    let r = a.finish(&[]);
+    assert_eq!(r.episodes.len(), 1, "{:#?}", r.episodes);
+    assert_eq!(r.episodes[0].state, PathState::LanDown);
+}

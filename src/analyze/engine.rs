@@ -147,7 +147,16 @@ pub(super) struct EpFlags {
 fn close_episode(a: &mut IfAcc, iface: &str, tick: Duration, tick_s: f64) -> Option<(Episode, EpFlags)> {
     let (Some(st), Some(lb)) = (a.open.start, a.open.last_bad) else { return None };
     let end_base = lb.max(st);
-    let state = a.open.states.iter().max_by_key(|(_, c)| **c).and_then(|(k, _)| serde_json::from_value(serde_json::Value::String(k.clone())).ok()).unwrap_or(PathState::Unknown);
+    // The most frequent bad state; on a tie the failure nearest to the user wins (a dead
+    // gateway also hides the line and the internet), never the alphabetical order of names.
+    let state = a
+        .open
+        .states
+        .iter()
+        .filter_map(|(k, c)| serde_json::from_value::<PathState>(serde_json::Value::String(k.clone())).ok().map(|st| (st, *c)))
+        .max_by_key(|(st, c)| (*c, std::cmp::Reverse(nearness_rank(*st))))
+        .map(|(st, _)| st)
+        .unwrap_or(PathState::Unknown);
     let bands = std::mem::take(&mut a.open.bands);
     let dom_band = bands.iter().max_by_key(|(_, c)| **c).map(|(k, _)| k.clone());
     let flags = EpFlags {
@@ -1256,4 +1265,18 @@ fn in_window_times(v: &[DateTime<Utc>], lo: DateTime<Utc>, hi: DateTime<Utc>) ->
     let a = v.partition_point(|t| *t < lo);
     let b = v.partition_point(|t| *t <= hi);
     &v[a..b.max(a)]
+}
+
+/// How close to the measuring device a failure is (lower = nearer). Used to break ties between
+/// equally frequent states of one episode.
+fn nearness_rank(s: PathState) -> u8 {
+    match s {
+        PathState::LinkDown => 0,
+        PathState::NoIp => 1,
+        PathState::LanDown => 2,
+        PathState::IspDown => 3,
+        PathState::WanDown => 4,
+        PathState::DnsDown => 5,
+        _ => 9,
+    }
 }
