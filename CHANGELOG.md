@@ -2,6 +2,22 @@
 
 All notable changes to `linkwatch` are documented in this file.
 
+## [0.10.0] - 2026-11-28
+
+### Added
+- **Readiness advisor** ([docs/ADVISOR.md](docs/ADVISOR.md)): `linkwatch check` ends with
+  GO / GO WITH CAVEATS / NO-GO, one top action, and for every caveat the conclusion it spoils,
+  its evidence and threshold. `[advisor] accept = [...]` silences an accepted risk (blocking
+  items cannot be accepted). During a run, Wi-Fi power-save turning on and the clock losing
+  NTP sync are reported once per session (`HostAlertKind::ClockUnsynced` is new).
+
+### Changed
+- The analyzer indexes events and time series by time: a session with 54 000 events and
+  2 000 episodes analyzes in 0.18 s instead of 1.9 s.
+- axum 0.8 (route syntax `/{id}`), md-5 0.11.
+- `scripts/make-fixture.py` also redacts host names in free text, session ids (they carry the
+  point id) and device make/model.
+
 ## [0.9.0] - 2026-11-28
 
 ### Added
