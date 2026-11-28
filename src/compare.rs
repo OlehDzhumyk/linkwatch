@@ -40,6 +40,12 @@ pub struct SessionView {
 
 impl SessionView {
     pub fn load(dir: &Path) -> anyhow::Result<Self> {
+        Self::load_with(dir, false)
+    }
+
+    /// Like [`load`](Self::load). With `reclassify`, recorded sample states are recomputed by the
+    /// current classifier first (see `analyze::reclassify`).
+    pub fn load_with(dir: &Path, reclassify: bool) -> anyhow::Result<Self> {
         anyhow::ensure!(dir.is_dir(), "session directory not found: {}", dir.display());
         let meta: Option<SessionMeta> =
             std::fs::read(dir.join("meta.json")).ok().and_then(|b| serde_json::from_slice(&b).ok());
@@ -63,8 +69,12 @@ impl SessionView {
         let mut first_active_ts: Option<DateTime<Utc>> = None;
         let mut last_active_ts: Option<DateTime<Utc>> = None;
 
+        let mut rc = reclassify.then(|| analyze::reclassify::Reclassifier::for_session(meta.as_ref()));
         for st in Stream::ALL {
-            for env in store::read::iter(dir, st) {
+            for mut env in store::read::iter(dir, st) {
+                if let Some(rc) = rc.as_mut() {
+                    rc.apply(&mut env);
+                }
                 from_ts = Some(from_ts.map_or(env.ts, |f| f.min(env.ts)));
                 to_ts = Some(to_ts.map_or(env.ts, |t| t.max(env.ts)));
                 match &env.rec {

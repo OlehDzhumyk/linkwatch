@@ -16,6 +16,7 @@ pub mod attribution;
 mod detect;
 mod engine;
 mod markdown;
+pub mod reclassify;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

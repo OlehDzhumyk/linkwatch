@@ -1,5 +1,7 @@
 //! Golden tests: run the real analyzer on recorded sessions in `testdata/golden/<name>/` and
 //! compare a small summary with the committed `expect.json`.
+//! A second, optional file `expect-reclassified.json` holds the summary of the same session with
+//! `--reclassify` (recorded states recomputed by the current classifier).
 //! Set `LINKWATCH_UPDATE_GOLDEN=1` to rewrite the expectation files.
 
 use super::*;
@@ -12,11 +14,16 @@ fn golden_root() -> PathBuf {
 }
 
 /// Runs the analyzer on a session directory the same way `linkwatch analyze` does.
-fn analyze_dir(dir: &Path) -> Report {
+/// With `reclassify`, like `linkwatch analyze --reclassify`.
+fn analyze_dir_with(dir: &Path, reclassify: bool) -> Report {
     let meta: Option<SessionMeta> = std::fs::read(dir.join("meta.json")).ok().and_then(|b| serde_json::from_slice(&b).ok());
     let mut a = Analyzer::new(Opts::for_session(meta.as_ref()));
+    let mut rc = reclassify.then(|| reclassify::Reclassifier::for_session(meta.as_ref()));
     for st in Stream::ALL {
-        for e in store::read::iter(dir, st) {
+        for mut e in store::read::iter(dir, st) {
+            if let Some(rc) = rc.as_mut() {
+                rc.apply(&mut e);
+            }
             a.push(&e);
         }
     }
@@ -90,20 +97,27 @@ fn golden_sessions_match_expectations() {
         }
         checked += 1;
         let name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        let mut actual = serde_json::to_string_pretty(&summarize(&analyze_dir(&dir))).unwrap_or_default();
-        actual.push('\n');
-        if update {
-            std::fs::write(&expect_path, &actual).expect("write expect.json");
-            eprintln!("golden: updated {}", expect_path.display());
-            continue;
-        }
-        let expected = std::fs::read_to_string(&expect_path).unwrap_or_default();
-        let same = match (serde_json::from_str::<Value>(&expected), serde_json::from_str::<Value>(&actual)) {
-            (Ok(x), Ok(y)) => x == y,
-            _ => false,
-        };
-        if !same {
-            failures.push(format!("golden session `{name}` differs from expect.json:\n{}", diff(&expected, &actual)));
+        let reclass_path = dir.join("expect-reclassified.json");
+        for (path, reclassify, file) in [(&expect_path, false, "expect.json"), (&reclass_path, true, "expect-reclassified.json")] {
+            // expect-reclassified.json is optional: update mode writes it, other modes compare it when present.
+            if reclassify && !update && !path.exists() {
+                continue;
+            }
+            let mut actual = serde_json::to_string_pretty(&summarize(&analyze_dir_with(&dir, reclassify))).unwrap_or_default();
+            actual.push('\n');
+            if update {
+                std::fs::write(path, &actual).unwrap_or_else(|e| panic!("write {file}: {e}"));
+                eprintln!("golden: updated {}", path.display());
+                continue;
+            }
+            let expected = std::fs::read_to_string(path).unwrap_or_default();
+            let same = match (serde_json::from_str::<Value>(&expected), serde_json::from_str::<Value>(&actual)) {
+                (Ok(x), Ok(y)) => x == y,
+                _ => false,
+            };
+            if !same {
+                failures.push(format!("golden session `{name}` differs from {file}:\n{}", diff(&expected, &actual)));
+            }
         }
     }
     eprintln!("golden: {checked} session(s) checked");

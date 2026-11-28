@@ -122,6 +122,8 @@ linkwatch run --point B1/F2/R3                         # start monitoring loop +
 linkwatch sessions                                     # list recorded sessions
 linkwatch analyze /var/lib/linkwatch/<id> --router-log docsis.txt > report.md
 linkwatch compare /var/lib/linkwatch/<s1> /var/lib/linkwatch/<s2> > compare.md
+linkwatch analyze <session> --reclassify               # recompute the path state of every sample with the current classifier
+                                                       # (old sessions get classifier fixes; default off). Also: compare, support-report
 ```
 
 Default Web UI: `http://127.0.0.1:8080/` (set `[web] listen = "0.0.0.0:8080"` and `token` for LAN access and active probes).

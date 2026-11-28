@@ -95,6 +95,10 @@ enum Cmd {
         /// Print JSON instead of Markdown.
         #[arg(long)]
         json: bool,
+        /// Recompute the path state of every sample with the current classifier instead of
+        /// using the state recorded at the time.
+        #[arg(long)]
+        reclassify: bool,
     },
     /// Compare multiple sessions (different rooms/points, or 2.4 vs 5 GHz runs).
     Compare {
@@ -107,6 +111,10 @@ enum Cmd {
         /// Print JSON instead of Markdown.
         #[arg(long)]
         json: bool,
+        /// Recompute the path state of every sample with the current classifier instead of
+        /// using the state recorded at the time.
+        #[arg(long)]
+        reclassify: bool,
     },
     /// Build a tailored, redacted support or landlord report pack from one or more sessions.
     SupportReport {
@@ -130,6 +138,10 @@ enum Cmd {
         /// Maximum clock difference in seconds when comparing multiple sessions.
         #[arg(long, default_value_t = 2.0)]
         tolerance_s: f64,
+        /// Recompute the path state of every sample with the current classifier instead of
+        /// using the state recorded at the time.
+        #[arg(long)]
+        reclassify: bool,
     },
 }
 
@@ -172,10 +184,10 @@ fn main() -> ExitCode {
                 println!("{}", toml::to_string_pretty(&cfg).unwrap_or_default());
                 Ok(true)
             }
-            Cmd::Analyze { session, router_log, json } => analyze_cmd(&cfg, session, router_log, json),
-            Cmd::Compare { sessions, tolerance_s, json } => compare_cmd(&cfg, sessions, tolerance_s, json),
-            Cmd::SupportReport { sessions, audience, lang, redact, format, router_log, tolerance_s } => {
-                support_report_cmd(&cfg, sessions, audience, lang, redact, format, router_log, tolerance_s)
+            Cmd::Analyze { session, router_log, json, reclassify } => analyze_cmd(&cfg, session, router_log, json, reclassify),
+            Cmd::Compare { sessions, tolerance_s, json, reclassify } => compare_cmd(&cfg, sessions, tolerance_s, json, reclassify),
+            Cmd::SupportReport { sessions, audience, lang, redact, format, router_log, tolerance_s, reclassify } => {
+                support_report_cmd(&cfg, sessions, audience, lang, redact, format, router_log, tolerance_s, reclassify)
             }
             Cmd::Calibrate { seconds } => {
                 let ifaces = run::resolve_ifaces(&cfg);
@@ -209,7 +221,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn analyze_cmd(cfg: &config::Config, session: Option<String>, router_log: Option<PathBuf>, json: bool) -> anyhow::Result<bool> {
+fn analyze_cmd(cfg: &config::Config, session: Option<String>, router_log: Option<PathBuf>, json: bool, reclassify: bool) -> anyhow::Result<bool> {
     use model::Stream;
     let dir = match session {
         Some(s) if std::path::Path::new(&s).is_dir() => PathBuf::from(s),
@@ -228,10 +240,14 @@ fn analyze_cmd(cfg: &config::Config, session: Option<String>, router_log: Option
     let meta: Option<model::SessionMeta> = std::fs::read(dir.join("meta.json")).ok().and_then(|b| serde_json::from_slice(&b).ok());
     let mut a = analyze::Analyzer::new(analyze::Opts::for_session(meta.as_ref()));
     let mut skipped = 0;
+    let mut rc = reclassify.then(|| analyze::reclassify::Reclassifier::for_session(meta.as_ref()));
     // Samples must be in order per interface; the other streams are used as sets.
     for st in Stream::ALL {
         let mut it = store::read::iter(&dir, st);
-        for e in it.by_ref() {
+        for mut e in it.by_ref() {
+            if let Some(rc) = rc.as_mut() {
+                rc.apply(&mut e);
+            }
             a.push(&e);
         }
         skipped += it.skipped();
@@ -248,7 +264,7 @@ fn analyze_cmd(cfg: &config::Config, session: Option<String>, router_log: Option
     Ok(true)
 }
 
-fn compare_cmd(cfg: &config::Config, sessions: Vec<String>, tolerance_s: f64, json: bool) -> anyhow::Result<bool> {
+fn compare_cmd(cfg: &config::Config, sessions: Vec<String>, tolerance_s: f64, json: bool, reclassify: bool) -> anyhow::Result<bool> {
     let mut views = Vec::with_capacity(sessions.len());
     for s in sessions {
         let dir = if std::path::Path::new(&s).is_dir() {
@@ -256,7 +272,7 @@ fn compare_cmd(cfg: &config::Config, sessions: Vec<String>, tolerance_s: f64, js
         } else {
             cfg.data_dir.join(&s)
         };
-        views.push(compare::SessionView::load(&dir)?);
+        views.push(compare::SessionView::load_with(&dir, reclassify)?);
     }
     let rep = compare::compare(views, &compare::CompareOpts { tolerance_s: tolerance_s.max(0.0) });
     if json {
@@ -277,6 +293,7 @@ fn support_report_cmd(
     format: support_report::SupportFormat,
     router_log: Option<PathBuf>,
     tolerance_s: f64,
+    reclassify: bool,
 ) -> anyhow::Result<bool> {
     anyhow::ensure!(sessions.len() <= 8, "at most 8 sessions supported");
     let dirs: Vec<PathBuf> = if sessions.is_empty() {
@@ -294,7 +311,7 @@ fn support_report_cmd(
     };
     let mut views = Vec::with_capacity(dirs.len());
     for d in dirs {
-        views.push(compare::SessionView::load(&d)?);
+        views.push(compare::SessionView::load_with(&d, reclassify)?);
     }
     let site = cfg.site.file.as_ref().and_then(|p| site::Site::load(p).ok());
     let router_lines = match router_log {
