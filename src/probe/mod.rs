@@ -31,27 +31,48 @@ const ECHO_CHECK_TIMEOUT: Duration = Duration::from_secs(1);
 enum HopClass {
     /// Gateway, LAN member, walk target or bogus address: ignore.
     Skip,
-    /// Private or CGNAT address that is not the gateway: a second NAT box
-    /// of the user (double NAT), not the ISP. Look further.
-    SecondNat,
-    /// Public address: a candidate for the ISP first hop.
+    /// RFC 1918 address that is not the gateway: either the ISP's own first hop (cable ISPs
+    /// often use 10.x for the CMTS side) or a second NAT box of the user (double NAT).
+    /// [`is_local_box`] decides by RTT.
+    Private,
+    /// Public or CGNAT (100.64.0.0/10, always ISP equipment) address: a candidate.
     Public,
 }
 
-/// True for RFC 1918 (10/8, 172.16/12, 192.168/16) and CGNAT 100.64.0.0/10.
-fn is_private_or_cgnat(ip: Ipv4Addr) -> bool {
-    let o = ip.octets();
-    ip.is_private() || (o[0] == 100 && (o[1] & 0xC0) == 64)
+/// True for RFC 1918 (10/8, 172.16/12, 192.168/16).
+fn is_rfc1918(ip: Ipv4Addr) -> bool {
+    ip.is_private()
 }
 
 fn classify_hop(hop: Ipv4Addr, gateway: Ipv4Addr, lan: Option<(Ipv4Addr, u8)>) -> HopClass {
     if !is_isp_candidate(hop, gateway, lan) {
         HopClass::Skip
-    } else if is_private_or_cgnat(hop) {
-        HopClass::SecondNat
+    } else if is_rfc1918(hop) {
+        HopClass::Private
     } else {
         HopClass::Public
     }
+}
+
+/// A private hop that answers within this much of the gateway's RTT sits in the same home
+/// (a second router or modem in router mode). An ISP first hop behind a DOCSIS/DSL/fibre line
+/// is several ms further: the line itself adds that delay. Engineering estimate.
+const LOCAL_BOX_EXTRA_MS: f64 = 1.0;
+
+fn is_local_box(hop_rtt_ms: f64, gw_rtt_ms: f64) -> bool {
+    hop_rtt_ms - gw_rtt_ms < LOCAL_BOX_EXTRA_MS
+}
+
+/// Best (lowest) RTT of a few echoes, `None` when none answers.
+async fn best_rtt(iface: &str, dst: Ipv4Addr) -> Option<f64> {
+    let mut best: Option<f64> = None;
+    for _ in 0..ECHO_CHECK_TRIES {
+        let r = icmp::ping(iface, dst, ECHO_CHECK_TIMEOUT).await;
+        if let Some(v) = r.rtt_ms.filter(|_| r.ok) {
+            best = Some(best.map_or(v, |b: f64| b.min(v)));
+        }
+    }
+    best
 }
 
 /// Acceptance rule: one answered echo out of the tries is enough.
@@ -80,9 +101,10 @@ async fn answers_echo(iface: &str, hop: Ipv4Addr) -> bool {
 /// routers (BNG/BRAS) never do. Without this check every internet outage
 /// would be blamed on the line.
 ///
-/// A private or CGNAT hop that is not the gateway is the user's own second
-/// NAT box (double NAT). It says nothing about the line, so the walk
-/// continues (up to TTL 4) for a public hop. If the first public hop is
+/// A private (RFC 1918) hop is either the ISP's first hop (cable ISPs often
+/// use 10.x) or the user's own second NAT box. A hop that answers within
+/// about 1 ms of the gateway is at home: the walk continues (up to TTL 4).
+/// CGNAT (100.64.0.0/10) is always ISP equipment. If the first public hop is
 /// silent, there is no ISP hop (`None`): the walk does not go on to a later
 /// router, which would not be the first hop.
 /// Returns `None` if nothing usable is found within `timeout` per TTL.
@@ -99,8 +121,17 @@ pub async fn discover_isp_hop(
         };
         match classify_hop(hop, gateway, lan) {
             HopClass::Skip => {}
-            HopClass::SecondNat => {
-                tracing::info!(%iface, %hop, ttl, "ISP hop candidate is private (second NAT box); looking further");
+            HopClass::Private => {
+                let Some(hop_rtt) = best_rtt(iface, hop).await else {
+                    tracing::info!(%iface, %hop, ttl, "private ISP hop candidate does not answer echo; not used, ISP checks stay off");
+                    return None;
+                };
+                match best_rtt(iface, gateway).await {
+                    Some(gw_rtt) if is_local_box(hop_rtt, gw_rtt) => {
+                        tracing::info!(%iface, %hop, ttl, hop_rtt, gw_rtt, "private hop answers as fast as the gateway: second NAT box at home; looking further");
+                    }
+                    _ => return Some(hop),
+                }
             }
             HopClass::Public => {
                 if answers_echo(iface, hop).await {
@@ -166,12 +197,13 @@ mod tests {
     }
 
     #[test]
-    fn private_and_cgnat_ranges() {
-        for a in [[10, 1, 2, 3], [172, 16, 0, 1], [172, 31, 255, 1], [192, 168, 1, 1], [100, 64, 0, 1], [100, 127, 255, 254]] {
-            assert!(is_private_or_cgnat(Ipv4Addr::from(a)), "{a:?}");
+    fn rfc1918_ranges() {
+        for a in [[10, 1, 2, 3], [172, 16, 0, 1], [172, 31, 255, 1], [192, 168, 1, 1]] {
+            assert!(is_rfc1918(Ipv4Addr::from(a)), "{a:?}");
         }
-        for a in [[172, 32, 0, 1], [172, 15, 0, 1], [100, 63, 255, 255], [100, 128, 0, 1], [203, 0, 113, 1], [8, 8, 8, 8]] {
-            assert!(!is_private_or_cgnat(Ipv4Addr::from(a)), "{a:?}");
+        // CGNAT is ISP space, not a home box.
+        for a in [[172, 32, 0, 1], [172, 15, 0, 1], [100, 64, 0, 1], [100, 127, 255, 254], [203, 0, 113, 1], [8, 8, 8, 8]] {
+            assert!(!is_rfc1918(Ipv4Addr::from(a)), "{a:?}");
         }
     }
 
@@ -182,11 +214,19 @@ mod tests {
         assert_eq!(classify_hop(gw, gw, lan), HopClass::Skip);
         assert_eq!(classify_hop(Ipv4Addr::new(192, 168, 0, 7), gw, lan), HopClass::Skip);
         assert_eq!(classify_hop(ISP_WALK_TARGET, gw, lan), HopClass::Skip);
-        // Double NAT: private hop outside the LAN that is not the gateway.
-        assert_eq!(classify_hop(Ipv4Addr::new(192, 168, 1, 1), gw, lan), HopClass::SecondNat);
-        assert_eq!(classify_hop(Ipv4Addr::new(10, 0, 0, 1), gw, lan), HopClass::SecondNat);
-        assert_eq!(classify_hop(Ipv4Addr::new(100, 64, 0, 1), gw, lan), HopClass::SecondNat);
+        // Private hop outside the LAN: ISP (cable 10.x) or a second home router; decided by RTT.
+        assert_eq!(classify_hop(Ipv4Addr::new(192, 168, 1, 1), gw, lan), HopClass::Private);
+        assert_eq!(classify_hop(Ipv4Addr::new(10, 53, 39, 41), gw, lan), HopClass::Private);
+        assert_eq!(classify_hop(Ipv4Addr::new(100, 64, 0, 1), gw, lan), HopClass::Public);
         assert_eq!(classify_hop(Ipv4Addr::new(203, 0, 113, 1), gw, lan), HopClass::Public);
+    }
+
+    #[test]
+    fn local_box_by_rtt() {
+        // Second router at home: 0.4 ms beyond the gateway.
+        assert!(is_local_box(3.4, 3.0));
+        // Cable ISP first hop: ~8 ms beyond the gateway.
+        assert!(!is_local_box(11.0, 3.0));
     }
 
     #[test]

@@ -2,6 +2,32 @@
 
 All notable changes to `linkwatch` are documented in this file.
 
+## [0.8.0] - 2026-11-28
+
+Fixes from an independent review. Verdicts first, no new features.
+
+### Fixed
+- Live verdict: an interface that never had link (an unused Ethernet port) no longer turns a
+  Wi-Fi drop into `router_problem`; single-path outages now send alerts.
+- A gateway that never answers ICMP no longer makes every internet outage a `lan_down`
+  (router) incident.
+- `degraded` needs at least two lost gateway probes in the window (one lost ping is noise).
+- The ISP first hop is used only when it answers echo. Many ISP access routers (seen on a
+  real DOCSIS line) never do, and every internet outage was then blamed on the line. A private
+  hop that answers within 1 ms of the gateway is a second home router and is skipped; CGNAT
+  hops count as ISP equipment.
+- Detective: `host_s` ignores contradicted suspects (no more `mixed` with 0 s of network);
+  observer results get a real confidence; all thresholds are named with reasons.
+- Docs and packaging: the sysctl file now really sets `ping_group_range`; host-wide ARP and
+  `rp_filter` effects are explained; the TLS comment lists webhooks; `calibrate` says its
+  file is informational; a "Before 1.0" roadmap.
+
+### Changed
+- Speed tests are light by default: every 6 h, at most 50 MiB per test (about 200 MiB per
+  interface per day instead of several GB). The evening speed-up stays as an option.
+- Host alerts are typed (`HostAlertKind`, optional `iface`); old session files still parse.
+  Router WAN status uses one helper; engine time windows are named constants.
+
 ## [0.7.0] - 2026-11-28
 
 ### Added
