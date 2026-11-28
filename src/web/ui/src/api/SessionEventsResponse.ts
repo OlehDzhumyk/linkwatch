@@ -2,7 +2,7 @@
 import type { Envelope } from "./Envelope.js";
 
 /**
- * `GET /api/sessions/:id/events`: newest first.
+ * `GET /api/sessions/{id}/events`: newest first.
  */
 export type SessionEventsResponse = { events: Array<Envelope>, 
 /**
