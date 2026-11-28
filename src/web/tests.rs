@@ -1022,3 +1022,36 @@ async fn support_report_endpoint_formats_and_redaction() {
     assert!(raw_html.contains("filename=\"support-report-s1.html\""), "{raw_html}");
     assert!(!raw_html.contains("<script"), "{raw_html}");
 }
+
+#[test]
+fn live_report_is_reused_for_five_minutes() {
+    let rep = Arc::new(api::ReportResponse {
+        session: "s".into(),
+        from: None,
+        to: None,
+        hours: 0.0,
+        verdict: None,
+        verdict_summary: String::new(),
+        verdict_code: String::new(),
+        verdict_args: Default::default(),
+        network_incidents: 0,
+        load_incidents: 0,
+        observer_incidents: 0,
+        ifaces: Vec::new(),
+        episodes: Vec::new(),
+        findings: Vec::new(),
+        patterns: Vec::new(),
+        observer_findings: Vec::new(),
+        observer_trust: Default::default(),
+        router: None,
+        lan: None,
+    });
+    assert_eq!(api::REPORT_FRESH, Duration::from_secs(300));
+    let mut c = api::ReportCache::default();
+    assert!(c.get_fresh("k").is_none());
+    c.put_fresh("k".into(), rep);
+    c.age_fresh("k", Duration::from_secs(299));
+    assert!(c.get_fresh("k").is_some(), "reused inside the window");
+    c.age_fresh("k", Duration::from_secs(301));
+    assert!(c.get_fresh("k").is_none(), "rebuilt after the window");
+}

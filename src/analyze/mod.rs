@@ -20,6 +20,8 @@ mod markdown;
 mod tests;
 #[cfg(test)]
 mod attribution_tests;
+#[cfg(test)]
+mod perf_tests;
 
 pub use engine::Analyzer;
 pub use markdown::to_markdown;

@@ -1332,17 +1332,32 @@ pub(crate) struct ReportCache {
     fresh: HashMap<String, (std::time::Instant, Arc<ReportResponse>)>,
 }
 
-/// How long a report of a growing session is reused.
-pub(crate) const REPORT_FRESH: std::time::Duration = std::time::Duration::from_secs(30);
+/// How long a report of a growing session is reused (5 min).
+///
+/// Why: the analyzer re-reads the whole session and keeps all events in memory (see
+/// docs/ROADMAP.md, "Live report cost"). On a Raspberry Pi with `MemoryMax=256M` and a
+/// week-long session, a rebuild every 30 s while a tab is open risks OOM and late probe ticks.
+/// The cached report is served unchanged until it is this old; `ReportResponse` has no age
+/// field, so the UI sees an older (at most 5 min) report of a running session. Only one rebuild
+/// runs at a time (`report_build` lock) and it runs in `spawn_blocking`.
+pub(crate) const REPORT_FRESH: std::time::Duration = std::time::Duration::from_secs(300);
 
 impl ReportCache {
-    fn get_fresh(&self, key: &str) -> Option<Arc<ReportResponse>> {
+    pub(crate) fn get_fresh(&self, key: &str) -> Option<Arc<ReportResponse>> {
         self.fresh.get(key).filter(|(t, _)| t.elapsed() < REPORT_FRESH).map(|(_, r)| r.clone())
     }
 
-    fn put_fresh(&mut self, key: String, v: Arc<ReportResponse>) {
+    pub(crate) fn put_fresh(&mut self, key: String, v: Arc<ReportResponse>) {
         self.fresh.retain(|_, (t, _)| t.elapsed() < REPORT_FRESH);
         self.fresh.insert(key, (std::time::Instant::now(), v));
+    }
+
+    /// Test helper: make a fresh entry look `age` old.
+    #[cfg(test)]
+    pub(crate) fn age_fresh(&mut self, key: &str, age: std::time::Duration) {
+        if let Some((t, _)) = self.fresh.get_mut(key) {
+            *t = std::time::Instant::now().checked_sub(age).unwrap_or(*t);
+        }
     }
 
     fn get(&mut self, key: &str) -> Option<Arc<ReportResponse>> {
@@ -1611,7 +1626,8 @@ async fn report(State(st): State<AppState>, Query(q): Query<ReportQuery>) -> Api
             lan: None,
         }));
     };
-    let fresh_key = format!("{}|{live_verdict:?}", dir.display());
+    // No verdict in this key: a flapping live verdict must not defeat the rate limit.
+    let fresh_key = dir.display().to_string();
     if let Some(hit) = st.reports.lock().unwrap_or_else(|e| e.into_inner()).get_fresh(&fresh_key) {
         return Ok(json_body(&*hit));
     }
