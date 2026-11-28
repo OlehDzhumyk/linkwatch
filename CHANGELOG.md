@@ -2,6 +2,28 @@
 
 All notable changes to `linkwatch` are documented in this file.
 
+## [0.12.0] - 2026-11-28
+
+Refactor to the target structure in `docs/ARCHITECTURE.md` (steps R0–R7). Reports, verdicts
+and the web API are the same as in 0.11.1; the golden snapshots did not change.
+
+### Changed
+- **Golden tests (R0):** `expect.json` also checks episode state, end, confidence and blinds,
+  causes, Observer Trust and session-wide blinds. New `snapshot.json` holds the whole report.
+- **One session loader (R1):** `session::load` serves `analyze`, `compare`, `support-report`
+  and the web. The web line limit is a documented load option.
+- **One verdict headline (R2):** `verdict::headline` replaces the web-only verdict text code.
+- **Analyzer stages (R3):** `Analyzer::finish` calls named stages in `analyze/stages/`
+  (episodes, cross-path cause, context, facts, incidents, masking, observer, summary).
+- **Classifier limits (R4):** every classifier threshold is a named constant with a reason in
+  `classify/limits.rs`.
+- **Modules (R5–R7):** check code in `check/`; router, audit, advice and CVE code in `router/`;
+  the web API split by tab in `web/api/`.
+
+### Added
+- Cargo features `router-audit`, `cve`, `alerts` (all on by default). Without `cve` and
+  `alerts` the build has no TLS stack. CI builds `--no-default-features`.
+
 ## [0.11.1] - 2026-11-28
 
 ### Fixed
