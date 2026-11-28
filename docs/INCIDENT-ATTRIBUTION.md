@@ -243,3 +243,47 @@ it covers the outage, it covers a part, it is out of scope, it comes too late, a
 contradicted — and every named network cause needs one case. That is about 40 cases; A1–A34
 plus the existing end-to-end tests cover the matrix except "too late" for suspects other than
 the driver reset (they have no start time yet).
+
+## 10. Masking: when a condition blocks a conclusion (design, not implemented)
+
+Section 6 asks "who caused this incident". A second question is "what can this incident
+prove at all". Some conditions do not cause the outage but **blind** the measurement for one
+element: a 90 % busy Wi-Fi channel does not prove the router failed, but it also means a
+Wi-Fi-only drop says nothing about the router. Other conditions are small and must be
+**tolerated**: they lower confidence a little but do not block anything.
+
+Each condition gets a `blinds` set (the elements it hides: `wifi`, `router`, `line`, `isp`,
+`latency`, `timing`) and a strength. Per incident the detective then reports:
+
+- `can_judge`: elements this incident can prove something about;
+- `blinded`: elements it cannot judge, each with the condition that blinds it;
+- `inconclusive` as an extra attribution when the condition blinds the element that the
+  verdict would blame **and** no independent path or log can see past it.
+
+Rules:
+1. An **independent path unblinds**: a healthy Ethernet path proves the router and line were
+   fine even while the Wi-Fi channel was saturated (the incident stays a Wi-Fi incident).
+2. A **small condition never blinds** (same dose rule as section 6: r < 0.1, or a session
+   share below 5 %); it only shows as a note.
+3. A **session-wide condition** (power-save on all night, Observer Trust `polluted`) blinds the
+   element for the whole session and is reported once, at the top, not on every incident.
+4. **Nothing is invented**: when an element is blinded, the report says so and names the fix;
+   it never falls back to a guess.
+
+| # | Situation | Expected | Why |
+|---|---|---|---|
+| M1 | Wi-Fi-only drop 20 s, channel 90 % busy, no Ethernet | `inconclusive` for `router`, `line`; `can_judge: wifi` | the busy channel hides everything behind the AP |
+| M2 | The same, but Ethernet stays fine | `network`, Wi-Fi incident; router and line judged healthy | the cable path unblinds |
+| M3 | Wi-Fi-only drop, signal −86 dBm, no Ethernet | `inconclusive` for `router`, `line` | as M1 |
+| M4 | Power-save on all session | `blinded: latency` for the session (stall counts, bufferbloat, RTT medians); outages still judged | power-save adds latency, not long loss |
+| M5 | Clock not synchronized, router log imported | `router_log` matches not used as counter-evidence; note | ±120 s matching needs a trusted clock |
+| M6 | Own speed test every 30 min in the evening | `blinded: isp` for the evening congestion pattern | own load is confounded with ISP peak load |
+| M7 | VPN active during the session | `blinded: isp`, `line` for internet-path incidents | probes travel the tunnel |
+| M8 | Router ignores ICMP (rate limit), internet fine | gateway loss does not blame the router (already in `classify`) | the router is busy answering, not down |
+| M9 | Monitor gap (service restart, disk full) | no conclusion inside the gap; gap listed | nothing was measured |
+| M10 | Observer Trust `polluted` all night (late ticks) | every network result at most `medium`; no `observer_confirmed` needed per incident | session-wide; reported once |
+| M11 | 2 % of ticks late (Trust `caution`) | nothing blinded; one note | tolerated (rule 2) |
+| M12 | Mesh / repeater between the observer and the main router | `router` means "the nearest Wi-Fi node"; note | the observer cannot see past the node |
+| M13 | Host downloads heavily all evening | `blinded: isp` for evening RTT / speed patterns | own load |
+| M14 | Repeated DFS channel switches all night | Wi-Fi incidents judged; cause `channel_switch`; advice: use a non-DFS channel | not blinding, a cause |
+| M15 | Two observers, one `polluted` | `compare` uses the clean one for shared incidents | the polluted one cannot confirm or deny |
