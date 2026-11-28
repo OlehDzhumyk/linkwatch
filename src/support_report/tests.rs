@@ -1,6 +1,6 @@
 use super::*;
 use crate::analyze::{BandStats, IfaceReport, LanReport, Msg, Report, RouterReport, parse_router_log};
-use crate::compare::SessionView;
+use crate::session::SessionResult;
 use crate::cve::CveItem;
 use crate::model::{IncidentOrigin, IfaceRole, NetworkFingerprint, PathState, SessionMeta, Verdict};
 use crate::router_audit::PortCheck;
@@ -56,7 +56,7 @@ fn mk_ep(iface: &str, role: IfaceRole, start: DateTime<Utc>, secs: i64, state: P
     }
 }
 
-fn mk_session(id: &str, label: &str, point: Option<&str>, hours: f64, ifaces: Vec<IfaceReport>, episodes: Vec<Episode>) -> SessionView {
+fn mk_session(id: &str, label: &str, point: Option<&str>, hours: f64, ifaces: Vec<IfaceReport>, episodes: Vec<Episode>) -> SessionResult {
     let t0 = DateTime::from_timestamp(1_800_000_000, 0).unwrap();
     let t1 = t0 + Duration::milliseconds((hours * 3_600_000.0) as i64);
     let mut net_inc = 0u32;
@@ -76,7 +76,7 @@ fn mk_session(id: &str, label: &str, point: Option<&str>, hours: f64, ifaces: Ve
             *causes.entry(k).or_default() += 1;
         }
     }
-    SessionView {
+    SessionResult {
         id: id.into(),
         label: label.into(),
         meta: Some(mk_meta(id, point, Some(label), None, Some(true))),

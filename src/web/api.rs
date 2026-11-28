@@ -2,13 +2,14 @@
 //! session files on a blocking thread with hard limits on lines and results.
 
 use super::{AppState, Authed};
-use crate::analyze::{Analyzer, Msg, Opts, Report};
+use crate::analyze::{Msg, Report};
 use crate::live::{EVENTS_KEPT, IfaceStatus, LAN_HISTORY_KEPT, LanPoint, MINUTES_KEPT, MinuteBucket};
 use crate::model::{
     Envelope, HostSample, IfaceRole, IncidentOrigin, LanSample, NetworkFingerprint, PathState,
     Record, RouterSample, ScanReport, SpeedResult, Stream, Verdict,
 };
 use crate::control::{SendError, SessionRequest};
+use crate::session::{self, LoadOpts};
 use crate::site::{BuildingView, Site};
 use crate::store::read;
 use std::sync::Arc;
@@ -30,6 +31,12 @@ use tokio_stream::wrappers::BroadcastStream;
 
 /// Most lines read from one session stream for one request.
 const MAX_SCAN_LINES: usize = 3_000_000;
+
+/// How the web reads a session: like `linkwatch analyze`, but with the line limit
+/// ([`MAX_SCAN_LINES`]) and without `--reclassify`.
+fn web_load_opts() -> LoadOpts {
+    LoadOpts { max_lines: Some(MAX_SCAN_LINES), ..Default::default() }
+}
 /// Most sessions listed.
 const MAX_SESSIONS: usize = 500;
 const MAX_HOURS: u32 = (MINUTES_KEPT / 60) as u32;
@@ -1485,19 +1492,12 @@ fn explain_verdict(verdict: Option<Verdict>, net_inc: u32, obs_inc: u32, ifaces:
     }
 }
 
-fn analyze_session_raw(dir: &Path) -> Report {
-    let meta: Option<crate::model::SessionMeta> = read::read_json_file(&dir.join(crate::store::META_FILE));
-    let mut analyzer = Analyzer::new(Opts::for_session(meta.as_ref()));
-    for st in Stream::ALL {
-        for env in read::iter(dir, st).take(MAX_SCAN_LINES) {
-            analyzer.push(&env);
-        }
-    }
-    analyzer.finish(&[])
+fn analyze_session_raw(dir: &Path) -> anyhow::Result<Report> {
+    Ok(session::load(dir, &web_load_opts())?.report)
 }
 
-fn analyze_session_dir(dir: &Path, id: String, live_verdict: Option<Verdict>) -> ReportResponse {
-    let rep = analyze_session_raw(dir);
+fn analyze_session_dir(dir: &Path, id: String, live_verdict: Option<Verdict>) -> anyhow::Result<ReportResponse> {
+    let rep = analyze_session_raw(dir)?;
     let ifaces: Vec<ReportIface> = rep
         .ifaces
         .iter()
@@ -1567,7 +1567,7 @@ fn analyze_session_dir(dir: &Path, id: String, live_verdict: Option<Verdict>) ->
     // Ensure strict newest-first order when multiple interfaces had interleaved episodes.
     episodes.sort_by_key(|a| std::cmp::Reverse(a.start));
     let vt = explain_verdict(verdict, rep.network_incidents, rep.observer_incidents, &ifaces);
-    ReportResponse {
+    Ok(ReportResponse {
         session: id,
         from: rep.from,
         to: rep.to,
@@ -1600,7 +1600,7 @@ fn analyze_session_dir(dir: &Path, id: String, live_verdict: Option<Verdict>) ->
             arp_alive_max: l.arp_alive_max,
             unique_seen_max: l.unique_seen_max,
         }),
-    }
+    })
 }
 
 fn resolve_report_target(st: &AppState, session: Option<String>) -> Result<(String, Option<PathBuf>), ApiError> {
@@ -1667,16 +1667,17 @@ async fn report(State(st): State<AppState>, Query(q): Query<ReportQuery>) -> Api
             Some(hit) => hit,
             None => {
                 drop(c);
-                let built = Arc::new(analyze_session_dir(&dir, id, live_verdict));
+                let built = Arc::new(analyze_session_dir(&dir, id, live_verdict)?);
                 c = cache.lock().unwrap_or_else(|e| e.into_inner());
                 c.put(key, built.clone());
                 built
             }
         };
         c.put_fresh(fresh_key, built.clone());
-        built
+        Ok::<_, anyhow::Error>(built)
     })
-    .await?;
+    .await?
+    .map_err(internal)?;
     Ok(json_body(&*rep))
 }
 
@@ -1712,7 +1713,7 @@ async fn report_export(State(st): State<AppState>, Query(q): Query<ExportQuery>)
     let Some(dir) = dir else {
         return Err(ApiError(StatusCode::NOT_FOUND, "session has no recorded data yet".into()));
     };
-    let rep = blocking(&st, move || analyze_session_raw(&dir)).await?;
+    let rep = blocking(&st, move || analyze_session_raw(&dir)).await?.map_err(internal)?;
     let slug = safe_slug(&id, "session");
     if fmt == "json" {
         let bytes = serde_json::to_vec_pretty(&rep).map_err(internal)?;
@@ -1755,7 +1756,7 @@ async fn compare_sessions(State(st): State<AppState>, Query(q): Query<CompareQue
     let rep = blocking(&st, move || {
         let mut views = Vec::with_capacity(dirs.len());
         for d in dirs {
-            views.push(crate::compare::SessionView::load(&d)?);
+            views.push(session::load(&d, &web_load_opts())?);
         }
         let mut rep = crate::compare::compare(views, &crate::compare::CompareOpts { tolerance_s: tol });
         if let Some(site) = site.as_deref() {
@@ -1965,7 +1966,7 @@ async fn support_report(
     let pack = blocking(&st, move || {
         let mut views = Vec::with_capacity(dirs.len());
         for d in dirs {
-            views.push(crate::compare::SessionView::load(&d)?);
+            views.push(session::load(&d, &web_load_opts())?);
         }
         Ok::<_, anyhow::Error>(build_pack(
             &SupportInput {

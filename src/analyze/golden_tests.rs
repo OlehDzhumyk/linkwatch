@@ -7,7 +7,6 @@
 //! Set `LINKWATCH_UPDATE_GOLDEN=1` to rewrite the expectation files.
 
 use super::*;
-use crate::store;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
@@ -15,21 +14,11 @@ fn golden_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata").join("golden")
 }
 
-/// Runs the analyzer on a session directory the same way `linkwatch analyze` does.
+/// Loads a session directory the same way `linkwatch analyze` does (`session::load`).
 /// With `reclassify`, like `linkwatch analyze --reclassify`.
 fn analyze_dir_with(dir: &Path, reclassify: bool) -> Report {
-    let meta: Option<SessionMeta> = std::fs::read(dir.join("meta.json")).ok().and_then(|b| serde_json::from_slice(&b).ok());
-    let mut a = Analyzer::new(Opts::for_session(meta.as_ref()));
-    let mut rc = reclassify.then(|| reclassify::Reclassifier::for_session(meta.as_ref()));
-    for st in Stream::ALL {
-        for mut e in store::read::iter(dir, st) {
-            if let Some(rc) = rc.as_mut() {
-                rc.apply(&mut e);
-            }
-            a.push(&e);
-        }
-    }
-    a.finish(&[])
+    let opts = crate::session::LoadOpts { reclassify, ..Default::default() };
+    crate::session::load(dir, &opts).expect("golden session loads").report
 }
 
 fn to_json<T: Serialize>(v: &T) -> Value {

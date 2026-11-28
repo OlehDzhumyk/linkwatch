@@ -13,10 +13,11 @@ pub mod render;
 mod tests;
 
 use crate::analyze::{Episode, IfaceReport, Report, RouterLine, is_load_provoked};
-use crate::compare::{CompareOpts, CompareReport, CorrelatedKind, NetworkMatch, SessionRow, SessionView, attach_site_rf, compare};
+use crate::compare::{CompareOpts, CompareReport, CorrelatedKind, NetworkMatch, SessionRow, attach_site_rf, compare};
 use crate::cve::CveLookupResponse;
 use crate::model::{IncidentOrigin, IfaceRole, Verdict};
 use crate::router_audit::RouterAudit;
+use crate::session::SessionResult;
 use crate::site::{RfPathEstimate, Site};
 use chrono::{DateTime, Local, Utc};
 use serde::{Deserialize, Serialize};
@@ -190,7 +191,7 @@ impl Default for SupportOpts {
 }
 
 pub struct SupportInput<'a> {
-    pub sessions: &'a [SessionView],
+    pub sessions: &'a [SessionResult],
     pub site: Option<&'a Site>,
     pub router_audit: Option<&'a RouterAudit>,
     pub cve: Option<&'a CveLookupResponse>,
@@ -204,7 +205,7 @@ struct Redactor {
 }
 
 impl Redactor {
-    fn new(level: RedactionLevel, sessions: &[SessionView]) -> Self {
+    fn new(level: RedactionLevel, sessions: &[SessionResult]) -> Self {
         let mut pairs = Vec::new();
         if level == RedactionLevel::Strict {
             for s in sessions {
@@ -482,13 +483,13 @@ fn is_lan_finding_code(code: &str) -> bool {
     matches!(code, "f_lan" | "f_lan_evening" | "c_lan")
 }
 
-fn has_evening_lan_surge(sessions: &[SessionView]) -> bool {
+fn has_evening_lan_surge(sessions: &[SessionResult]) -> bool {
     sessions
         .iter()
         .any(|s| s.report.findings_msg.iter().any(|m| m.code == "f_lan_evening"))
 }
 
-fn has_rogue_dhcp(sessions: &[SessionView]) -> bool {
+fn has_rogue_dhcp(sessions: &[SessionResult]) -> bool {
     sessions
         .iter()
         .any(|s| s.report.security_events.iter().any(|ev| ev.contains("rogue_gateway")))
@@ -509,7 +510,7 @@ pub fn build_pack(input: &SupportInput<'_>, opts: &SupportOpts) -> SupportPack {
         None
     };
 
-    // Build unified point rows (either from CompareReport or single SessionView).
+    // Build unified point rows (either from CompareReport or single SessionResult).
     let mut points = Vec::new();
     let mut session_rows: Vec<(usize, String, SessionRow)> = Vec::new();
     if let Some(ref mut cmp) = cmp_opt {
