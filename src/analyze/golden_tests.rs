@@ -21,6 +21,9 @@ fn analyze_dir_with(dir: &Path, reclassify: bool) -> Report {
     crate::session::load(dir, &opts).expect("golden session loads").report
 }
 
+/// One expectation file: path, with `--reclassify`, file name, the view of the report it holds.
+type GoldenCheck<'a> = (&'a PathBuf, bool, &'static str, fn(&Report) -> Value);
+
 fn to_json<T: Serialize>(v: &T) -> Value {
     serde_json::to_value(v).unwrap_or(Value::Null)
 }
@@ -123,7 +126,7 @@ fn golden_sessions_match_expectations() {
         let reclass_path = dir.join("expect-reclassified.json");
         let snap_path = dir.join("snapshot.json");
         let snap_reclass_path = dir.join("snapshot-reclassified.json");
-        let checks: [(&PathBuf, bool, &str, fn(&Report) -> Value); 4] = [
+        let checks: [GoldenCheck<'_>; 4] = [
             (&expect_path, false, "expect.json", summarize),
             (&reclass_path, true, "expect-reclassified.json", summarize),
             (&snap_path, false, "snapshot.json", snapshot),

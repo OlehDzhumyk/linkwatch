@@ -76,13 +76,11 @@ pub fn load(dir: &Path, opts: &LoadOpts) -> anyhow::Result<SessionResult> {
     // Samples must be in order per interface; the other streams are used as sets.
     for st in Stream::ALL {
         let mut it = store::read::iter(dir, st);
-        let mut taken = 0usize;
-        for mut env in it.by_ref() {
+        for (taken, mut env) in it.by_ref().enumerate() {
             if opts.max_lines.is_some_and(|max| taken >= max) {
                 tracing::warn!("session {id}: stream {st:?} is longer than {taken} lines; the rest is ignored");
                 break;
             }
-            taken += 1;
             if let Some(rc) = rc.as_mut() {
                 rc.apply(&mut env);
             }
