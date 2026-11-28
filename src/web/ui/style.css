@@ -242,6 +242,7 @@ details.disc > summary:hover { color: var(--fg); }
   font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums;
 }
 .badge.badge-warn { background: var(--warn-bg); color: var(--warn); }
+.badge.badge-attr { background: var(--neutral-bg); color: var(--fg); }
 .host-chip {
   display: inline-flex; align-items: center; gap: var(--s1);
   padding: 2px var(--s2); border-radius: var(--r-sm); background: var(--neutral-bg); color: var(--fg); font-size: 12px;
@@ -439,6 +440,9 @@ tr.connected td { font-weight: 600; background: var(--ok-bg); }
 .inc-iface { font-weight: 600; }
 .inc-ctxs { display: flex; flex-wrap: wrap; gap: var(--s1); }
 .inc-ctx { font-size: 12px; padding: 1px 6px; border-radius: 4px; background: var(--neutral-bg); color: var(--muted); }
+.inc-cause { font-weight: 600; color: var(--fg); }
+.inc-evid { flex-basis: 100%; }
+.inc-flip { flex-basis: 100%; font-style: italic; }
 .findings-list { margin: var(--s2) 0 0; padding-left: 18px; color: var(--muted); display: grid; gap: var(--s1); font-size: 13px; }
 .verdict-explain {
   margin: 0 0 var(--s3); padding: var(--s2) var(--s3); border-radius: var(--r-sm);

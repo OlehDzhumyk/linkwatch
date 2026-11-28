@@ -1,6 +1,9 @@
 // Session report (Sessions view): verdict sentence, KPIs, hourly profile, incidents, findings,
 // and the per-point table of the Map view. Also the shared incident row and verdict sentence.
 
+import type { Attribution } from "./api/Attribution.js";
+import type { Confidence } from "./api/Confidence.js";
+import type { NetworkCause } from "./api/NetworkCause.js";
 import type { ReportEpisode } from "./api/ReportEpisode.js";
 import type { ReportIface } from "./api/ReportIface.js";
 import type { ReportResponse } from "./api/ReportResponse.js";
@@ -51,6 +54,33 @@ const TRUST_KEY = {
   caution: "report.trust.caution",
   polluted: "report.trust.polluted",
 } as const satisfies Record<TrustLevel, MsgKey>;
+
+const ATTR_KEY = {
+  network: "report.attr.network",
+  network_despite_host: "report.attr.network_despite_host",
+  mixed: "report.attr.mixed",
+  observer_likely: "report.attr.observer_likely",
+  observer_confirmed: "report.attr.observer_confirmed",
+} as const satisfies Record<Attribution, MsgKey>;
+
+const CONF_KEY = {
+  low: "report.conf.low",
+  medium: "report.conf.medium",
+  high: "report.conf.high",
+} as const satisfies Record<Confidence, MsgKey>;
+
+const NCAUSE_KEY = {
+  router_reboot: "report.ncause.router_reboot",
+  router_wan_down: "report.ncause.router_wan_down",
+  router_log: "report.ncause.router_log",
+  ap_disconnect: "report.ncause.ap_disconnect",
+  channel_switch: "report.ncause.channel_switch",
+  carrier_loss: "report.ncause.carrier_loss",
+  roam: "report.ncause.roam",
+  dhcp: "report.ncause.dhcp",
+  weak_signal: "report.ncause.weak_signal",
+  busy_channel: "report.ncause.busy_channel",
+} as const satisfies Record<NetworkCause, MsgKey>;
 
 const scrollTo = (id: string) => (): void => byId(id).scrollIntoView({ behavior: "smooth", block: "start" });
 
@@ -156,7 +186,24 @@ export function episodeRow(ep: ReportEpisode, withContext = true, live = false):
       : ep.cause
         ? verdictLabel(ep.cause)
         : stateLabel(ep.state);
+  const fin = ep.finding as ReportEpisode["finding"] | undefined; // old saved reports have none
+  const attr = fin?.attribution;
+  const attrBadge = fin && attr && attr !== "network"
+    ? el("span", {
+      class: "badge badge-attr",
+      text: attr === "mixed"
+        ? t(ATTR_KEY[attr]) + " · " + t("report.attr.split", { host: fmtDur(fin.host_s), net: fmtDur(fin.network_s) })
+        : t(ATTR_KEY[attr]),
+      title: t(CONF_KEY[fin.confidence]),
+    })
+    : null;
   const ctx = withContext ? ep.context.slice(0, 4).map((c) => el("span", { class: "inc-ctx", text: tMsg(c) })) : [];
+  if (withContext && fin) {
+    const cause = fin.network_causes?.[0];
+    if (cause) ctx.push(el("span", { class: "inc-ctx inc-cause", text: t(NCAUSE_KEY[cause]) }));
+    for (const e of fin.evidence.slice(0, 3)) ctx.push(el("span", { class: "inc-ctx inc-evid", text: tMsg(e.msg) }));
+    if (fin.flip) ctx.push(el("span", { class: "inc-ctx inc-flip", text: tMsg(fin.flip) }));
+  }
   return el("li", null, el("button", {
     type: "button",
     class: "inc-item " + cTone,
@@ -168,6 +215,7 @@ export function episodeRow(ep: ReportEpisode, withContext = true, live = false):
       el("span", { class: "mono small inc-iface", text: ep.iface }),
       ep.band ? el("span", { class: "badge", text: ep.band }) : null,
       ep.speedtest_active ? el("span", { class: "badge badge-warn", text: t("report.load_tag") }) : null,
+      attrBadge,
       el("strong", { class: "small", text: fmtDur(ep.duration_s) })),
     el("span", { class: "pill small " + cTone, text: cLbl })),
   ctx.length ? el("div", { class: "inc-ctxs" }, ...ctx) : null));

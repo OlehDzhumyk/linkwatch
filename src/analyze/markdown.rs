@@ -44,17 +44,18 @@ pub fn to_markdown(r: &Report) -> String {
         }
     }
     let _ = writeln!(s, "\n## Outages (longer than micro-drops)\n");
-    let _ = writeln!(s, "| start | iface | duration | state | cause | origin | context |\n|---|---|---|---|---|---|---|");
+    let _ = writeln!(s, "| start | iface | duration | state | cause | origin | attribution | context |\n|---|---|---|---|---|---|---|---|");
     for e in r.episodes.iter().filter(|e| e.duration_s > r.micro_max_s).take(200) {
         let _ = writeln!(
             s,
-            "| {} | {} | {:.0}s | {:?} | {:?} | {:?} | {} |",
+            "| {} | {} | {:.0}s | {:?} | {:?} | {:?} | {} | {} |",
             lt(e.start),
             e.iface,
             e.duration_s,
             e.state,
             e.cause.unwrap_or(Verdict::Unknown),
             e.origin,
+            attribution_cell(&e.finding),
             cell(&e.context.join("; "))
         );
     }
@@ -144,4 +145,23 @@ pub fn to_markdown(r: &Report) -> String {
         }
     }
     s
+}
+
+fn snake<T: serde::Serialize>(v: &T) -> String {
+    serde_json::to_value(v).ok().and_then(|x| x.as_str().map(str::to_owned)).unwrap_or_default()
+}
+
+/// One table cell: `mixed (host 5 s)`, `observer_confirmed`, `network (high)`, plus the first network cause.
+fn attribution_cell(f: &attribution::Finding) -> String {
+    use attribution::Attribution as A;
+    let mut out = snake(&f.attribution);
+    match f.attribution {
+        A::Mixed => out.push_str(&format!(" (host {:.0} s)", f.host_s)),
+        A::Network | A::NetworkDespiteHost => out.push_str(&format!(" ({})", snake(&f.confidence))),
+        A::ObserverLikely | A::ObserverConfirmed => {}
+    }
+    if let Some(c) = f.network_causes.first() {
+        out.push_str(&format!("; {}", snake(c)));
+    }
+    out
 }
