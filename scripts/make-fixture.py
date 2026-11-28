@@ -53,6 +53,9 @@ BOOT_KEYS = {"boot_id", "prev_boot_id"}
 RUN_KEYS = {"run"}
 FREE_KEYS = {"label", "note", "user", "username", "email", "owner"}
 POINT_KEYS = {"point"}
+# The session id ends with the point id (e.g. "_B1_F6_K"); router make/model names the ISP.
+SESSION_KEYS = {"session"}
+DEVICE_KEYS = {"model", "vendor", "manufacturer", "model_name", "model_number", "firmware", "firmware_version", "software_version", "hardware_version"}
 # meta.json config entries with these key parts are dropped.
 CONFIG_DROP = re.compile(r"(?i)token|secret|passw|webhook|url|uri|path|dir|file|key|cert|credential|auth|email|user|smtp|chat_id|bot")
 PRIVATE_NETS = [ipaddress.ip_network(n) for n in (
@@ -72,6 +75,8 @@ class Redactor:
         self.ssid_re = None
         self.ordinals = collections.defaultdict(dict)  # kind -> {orig: n}
         self.secrets_seen = set()  # original strings that must not appear in the output
+        self.hosts = set()         # host names: also replaced inside free text (whole words)
+        self.host_re = None
 
     # --- collectors -------------------------------------------------------------------
     def learn(self, obj, key=None):
@@ -88,12 +93,16 @@ class Redactor:
                 self.ssid(obj)
             elif lk in HOST_KEYS | HOSTID_KEYS | BOOT_KEYS and obj.strip():
                 self.secrets_seen.add(obj)
+                if lk in HOST_KEYS:
+                    self.hosts.add(obj)
             for m in SSID_TEXT_RE.finditer(obj):
                 self.ssid(m.group(2))
 
     def finish_learning(self):
         names = sorted(self.ssids, key=len, reverse=True)
         self.ssid_re = re.compile("|".join(re.escape(n) for n in names)) if names else None
+        hosts = sorted(self.hosts, key=len, reverse=True)
+        self.host_re = word_re(hosts)
 
     # --- replacements -----------------------------------------------------------------
     def ssid(self, name):
@@ -180,6 +189,8 @@ class Redactor:
 
     # --- text and tree ----------------------------------------------------------------
     def text(self, s):
+        if self.host_re:
+            s = self.host_re.sub(lambda m: self.count("hostname", "host-redacted"), s)
         if self.ssid_re:
             s = self.ssid_re.sub(lambda m: self.ssids[m.group(0)], s)
         s = URL_RE.sub(self.url, s)
@@ -213,6 +224,11 @@ class Redactor:
                 return "redacted"
             if lk in POINT_KEYS:
                 return self.ordinal("point", v, "point-%d")
+            if lk in SESSION_KEYS:
+                return self.ordinal("session", v, "session-%d")
+            if lk in DEVICE_KEYS:
+                self.counts["device"] += 1
+                return "device-redacted"
             if "ssid" in lk and "bssid" not in lk:
                 return self.ssid(v)
         return self.walk(v, key)
@@ -296,11 +312,20 @@ def self_check(red, out_dir, written):
                         problems.append("%s: unexpected IPv4 %s" % (where, s))
                 if "@" in line and EMAIL_RE.search(line.replace("user@example.invalid", "")):
                     problems.append("%s: e-mail like string" % where)
-                low = line.lower()
+                # Whole words only: a short host name such as "lab" must not match "label".
                 for secret in red.secrets_seen:
-                    if secret.lower() in low:
+                    if word_re([secret]).search(line):
                         problems.append("%s: original name still present (%d chars)" % (where, len(secret)))
     return problems[:50]
+
+
+def word_re(words):
+    """Case-insensitive regex matching any of `words` as a whole word (not inside another word)."""
+    words = [w for w in words if w]
+    if not words:
+        return None
+    alt = "|".join(re.escape(w) for w in words)
+    return re.compile(r"(?<![A-Za-z0-9_])(?:%s)(?![A-Za-z0-9_])" % alt, re.IGNORECASE)
 
 
 def main():
