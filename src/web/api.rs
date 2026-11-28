@@ -64,16 +64,50 @@ pub(super) fn routes() -> Router<AppState> {
             "/api/control/session",
             post(control_session).layer(DefaultBodyLimit::max(CONTROL_BODY_LIMIT)),
         )
-        .route("/api/router/audit", get(router_audit_get))
-        .route(
-            "/api/router/probe",
-            post(router_probe_post).layer(DefaultBodyLimit::max(CONTROL_BODY_LIMIT)),
-        )
-        .route(
-            "/api/router/cve",
-            post(router_cve_post).layer(DefaultBodyLimit::max(CONTROL_BODY_LIMIT)),
-        )
         .route("/api/advice", get(advice_get))
+        .merge(router_audit_routes())
+        .merge(cve_routes())
+}
+
+/// Routes of the `router-audit` feature.
+#[cfg(feature = "router-audit")]
+fn router_audit_routes() -> Router<AppState> {
+    Router::new().route("/api/router/audit", get(router_audit_get)).route(
+        "/api/router/probe",
+        post(router_probe_post).layer(DefaultBodyLimit::max(CONTROL_BODY_LIMIT)),
+    )
+}
+
+/// Without the feature the routes stay, so a client gets a clear error and not an empty 404.
+#[cfg(not(feature = "router-audit"))]
+fn router_audit_routes() -> Router<AppState> {
+    Router::new().route("/api/router/audit", axum::routing::any(router_audit_off)).route("/api/router/probe", axum::routing::any(router_audit_off))
+}
+
+#[cfg(not(feature = "router-audit"))]
+async fn router_audit_off() -> ApiResult {
+    Err(feature_off("router-audit"))
+}
+
+/// Routes of the `cve` feature.
+#[cfg(feature = "cve")]
+fn cve_routes() -> Router<AppState> {
+    Router::new().route("/api/router/cve", post(router_cve_post).layer(DefaultBodyLimit::max(CONTROL_BODY_LIMIT)))
+}
+
+#[cfg(not(feature = "cve"))]
+fn cve_routes() -> Router<AppState> {
+    Router::new().route("/api/router/cve", axum::routing::any(cve_off))
+}
+
+#[cfg(not(feature = "cve"))]
+async fn cve_off() -> ApiResult {
+    Err(feature_off("cve"))
+}
+
+#[cfg(not(all(feature = "router-audit", feature = "cve")))]
+fn feature_off(feature: &str) -> ApiError {
+    ApiError(StatusCode::NOT_FOUND, format!("not built with the `{feature}` feature"))
 }
 
 // ---------- response bodies ----------
@@ -1154,6 +1188,7 @@ fn is_json(headers: &HeaderMap) -> bool {
 }
 
 /// Shortest time between two active router probes or CVE lookups.
+#[cfg(any(feature = "router-audit", feature = "cve"))]
 const PROBE_MIN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
 
 fn rate_limited(
@@ -1697,6 +1732,7 @@ async fn compare_sessions(State(st): State<AppState>, Query(q): Query<CompareQue
 
 // ---------- router audit, CVE lookup & advisor ----------
 
+#[cfg(feature = "router-audit")]
 fn live_gateway(live: &crate::live::Live) -> (Option<std::net::Ipv4Addr>, Option<String>) {
     live.read(|s| {
         let gw = s
@@ -1715,12 +1751,13 @@ fn live_gateway(live: &crate::live::Live) -> (Option<std::net::Ipv4Addr>, Option
 /// Last audit result only. A GET never sends anything to the network: viewers (possibly without
 /// a token) must not be able to trigger port checks or adapter logins. Probes run only through
 /// `POST /api/router/probe`, which needs the token.
+#[cfg(feature = "router-audit")]
 async fn router_audit_get(State(st): State<AppState>) -> ApiResult {
     if let Some(cached) = st.router_audit.lock().await.clone() {
         return Ok(json_body(&cached));
     }
     let (gw, gw_mac) = live_gateway(&st.live);
-    Ok(json_body(&crate::router_audit::RouterAudit {
+    Ok(json_body(&crate::router::RouterAudit {
         probed_at: Utc::now(),
         gateway_ip: gw.map(|g| g.to_string()),
         gateway_mac: gw_mac,
@@ -1734,17 +1771,18 @@ async fn router_audit_get(State(st): State<AppState>) -> ApiResult {
     }))
 }
 
+#[cfg(feature = "router-audit")]
 async fn router_probe_post(
     State(st): State<AppState>,
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> ApiResult {
     require_post_auth(&st, &headers, "set [web] token to probe router with credentials")?;
-    let req: crate::router_audit::RouterProbeRequest = serde_json::from_slice(&body)
+    let req: crate::router::audit::RouterProbeRequest = serde_json::from_slice(&body)
         .map_err(|e| ApiError(StatusCode::BAD_REQUEST, format!("invalid request: {e}")))?;
     let (live_gw, gw_mac) = live_gateway(&st.live);
     let target = match req.host.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        Some(raw) => crate::router_audit::validate_local_host(raw)
+        Some(raw) => crate::router::audit::validate_local_host(raw)
             .map_err(|e| ApiError(StatusCode::BAD_REQUEST, format!("{e:#}")))?,
         None => live_gw.ok_or_else(|| {
             ApiError(StatusCode::BAD_REQUEST, "gateway IP not known; specify a local host".into())
@@ -1753,11 +1791,12 @@ async fn router_probe_post(
     if let Some(r) = rate_limited(&st.last_probe, PROBE_MIN_INTERVAL, "router probe") {
         return Ok(r);
     }
-    let audit = crate::router_audit::run_probe(target, gw_mac, &req, st.router_upnp_url.as_deref()).await;
+    let audit = crate::router::audit::run_probe(target, gw_mac, &req, st.router_upnp_url.as_deref()).await;
     *st.router_audit.lock().await = Some(audit.clone());
     Ok(json_body(&audit))
 }
 
+#[cfg(feature = "cve")]
 fn validate_cve_field(name: &str, raw: &str, required: bool) -> Result<(), ApiError> {
     let t = raw.trim();
     if required && t.is_empty() {
@@ -1772,13 +1811,14 @@ fn validate_cve_field(name: &str, raw: &str, required: bool) -> Result<(), ApiEr
     Ok(())
 }
 
+#[cfg(feature = "cve")]
 async fn router_cve_post(
     State(st): State<AppState>,
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> ApiResult {
     require_post_auth(&st, &headers, "set [web] token to query external CVE databases")?;
-    let req: crate::cve::CveLookupRequest = serde_json::from_slice(&body)
+    let req: crate::router::cve::CveLookupRequest = serde_json::from_slice(&body)
         .map_err(|e| ApiError(StatusCode::BAD_REQUEST, format!("invalid request: {e}")))?;
     validate_cve_field("model", &req.model, true)?;
     if let Some(v) = &req.vendor {
@@ -1790,7 +1830,7 @@ async fn router_cve_post(
     if let Some(r) = rate_limited(&st.last_cve, PROBE_MIN_INTERVAL, "CVE lookup") {
         return Ok(r);
     }
-    let res = crate::cve::lookup_cves(&st.data_dir, &req, st.nvd_api_key.as_deref())
+    let res = crate::router::cve::lookup_cves(&st.data_dir, &req, st.nvd_api_key.as_deref())
         .await
         .map_err(|e| ApiError(StatusCode::BAD_GATEWAY, format!("CVE lookup failed: {e:#}")))?;
     Ok(json_body(&res))
@@ -1798,7 +1838,7 @@ async fn router_cve_post(
 
 async fn advice_get(State(st): State<AppState>) -> ApiResult {
     let audit = st.router_audit.lock().await.clone();
-    let resp = st.live.read(|snap| crate::advice::evaluate(snap, audit.as_ref()));
+    let resp = st.live.read(|snap| crate::router::advice::evaluate(snap, audit.as_ref()));
     Ok(json_body(&resp))
 }
 

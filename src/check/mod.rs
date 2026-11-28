@@ -245,24 +245,10 @@ pub async fn check(cfg: &Config) -> Vec<Item> {
 
     // Optional router LAN ports + UPnP IGD reachability.
     if let Some(gw) = first_gw {
-        let ports = crate::router_audit::probe_gateway_ports(gw).await;
-        let high: Vec<String> = ports.iter().filter(|p| p.open && p.risk == "high").map(|p| format!("{} ({})", p.port, p.service)).collect();
-        let open_list: Vec<String> = ports.iter().filter(|p| p.open).map(|p| format!("{}/{}", p.port, p.service)).collect();
-        if !high.is_empty() {
-            out.push(item(
-                Level::Warn,
-                "gateway ports",
-                format!("{gw} insecure open: {}", high.join(", ")),
-                Some("disable Telnet/FTP in router administration settings"),
-            ));
-        } else {
-            out.push(item(
-                Level::Ok,
-                "gateway ports",
-                if open_list.is_empty() { format!("{gw}: no tested admin ports open") } else { format!("{gw} open: {}", open_list.join(", ")) },
-                None,
-            ));
-        }
+        #[cfg(feature = "router-audit")]
+        gateway_ports(gw, &mut out).await;
+        #[cfg(not(feature = "router-audit"))]
+        out.push(item(Level::Ok, "gateway ports", "skipped: this build has no `router-audit` feature", None));
         if cfg.router.enabled && cfg.router.upnp {
             match crate::router::probe_upnp_meta(gw, cfg.router.upnp_url.as_deref()).await {
                 Ok(m) => out.push(item(
@@ -281,6 +267,29 @@ pub async fn check(cfg: &Config) -> Vec<Item> {
         }
     }
     out
+}
+
+/// Port scan of the gateway admin ports (the `router-audit` feature).
+#[cfg(feature = "router-audit")]
+async fn gateway_ports(gw: std::net::Ipv4Addr, out: &mut Vec<Item>) {
+    let ports = crate::router::audit::probe_gateway_ports(gw).await;
+    let high: Vec<String> = ports.iter().filter(|p| p.open && p.risk == "high").map(|p| format!("{} ({})", p.port, p.service)).collect();
+    let open_list: Vec<String> = ports.iter().filter(|p| p.open).map(|p| format!("{}/{}", p.port, p.service)).collect();
+    if !high.is_empty() {
+        out.push(item(
+            Level::Warn,
+            "gateway ports",
+            format!("{gw} insecure open: {}", high.join(", ")),
+            Some("disable Telnet/FTP in router administration settings"),
+        ));
+    } else {
+        out.push(item(
+            Level::Ok,
+            "gateway ports",
+            if open_list.is_empty() { format!("{gw}: no tested admin ports open") } else { format!("{gw} open: {}", open_list.join(", ")) },
+            None,
+        ));
+    }
 }
 
 fn tempfile_probe(dir: &std::path::Path) -> std::io::Result<u64> {

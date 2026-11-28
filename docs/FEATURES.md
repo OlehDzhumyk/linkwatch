@@ -67,7 +67,7 @@ Measures the monitoring box itself (`host-YYYYMMDD.jsonl`, default every 10 s):
 
 ## 5. Router UPnP IGD Telemetry & LAN Device Sweep
 
-### UPnP IGD Poller (`src/router.rs`)
+### UPnP IGD Poller (`src/router/mod.rs`)
 - Disabled by default (`[router] enabled = false`). When enabled, discovers the gateway's IGDv1/IGDv2 description XML via SSDP (`M-SEARCH` restricted to the gateway IP) or explicit `upnp_url`.
 - Polls SOAP `GetStatusInfo`, `GetCommonLinkProperties`, `GetTotalBytesReceived`/`Sent` (and `GetTotalPacketsReceived`/`Sent`), computing WAN Mbit/s, packet/s rates, uptime, physical link status, and `bytes_saturated` (when 32-bit router counters clamp at `i32`/`u32::MAX`).
 
@@ -78,7 +78,7 @@ Measures the monitoring box itself (`host-YYYYMMDD.jsonl`, default every 10 s):
 
 ---
 
-## 6. Router Diagnostics Module (`src/router_audit.rs`)
+## 6. Router Diagnostics Module (`src/router/audit.rs`, feature `router-audit`)
 
 Read-only router auditing accessible from the **System** tab and `/api/router/*`:
 
@@ -103,7 +103,7 @@ Fast concurrent TCP connect check (650 ms timeout per port) on RFC1918/loopback 
 
 ---
 
-## 7. On-Demand CVE & CISA KEV Lookup (`src/cve.rs`)
+## 7. On-Demand CVE & CISA KEV Lookup (`src/router/cve.rs`, feature `cve`)
 
 Runs **only** when manually triggered via **Check CVEs** (`POST /api/router/cve`):
 1. Requires `[web] token` configured, authenticated caller, same-origin header, JSON body, validated `model` (1–128 non-control chars), and 5 s rate limit.
@@ -116,7 +116,7 @@ Runs **only** when manually triggered via **Check CVEs** (`POST /api/router/cve`
 
 ---
 
-## 8. Configuration & Security Advisor (`src/advice.rs`)
+## 8. Configuration & Security Advisor (`src/router/advice.rs`)
 
 Pure rule engine combining `LiveSnapshot` and cached `RouterAudit` into prioritized recommendations (`critical`, `warn`, `info`, `ok`):
 

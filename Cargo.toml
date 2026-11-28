@@ -33,17 +33,33 @@ toml = "1.2.3"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
 uuid = { version = "1.29.3", features = ["v4"] }
-md-5 = "0.11"
-rustls = { version = "0.23", default-features = false, features = ["std", "tls12"] }
+# Router audit only (feature `router-audit`): HTTP digest auth and the SNMP adapter.
+md-5 = { version = "0.11", optional = true }
+snmp2 = { version = "0.5.3", default-features = false, features = ["tokio", "crypto-rust"], optional = true }
+# TLS stack (feature `tls`, which only `cve` and `alerts` turn on).
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12"], optional = true }
 # Pure-Rust crypto provider (no C toolchain for musl/aarch64 builds). It is a pre-release and not
 # audited, so it is pinned exactly. It is used for two things: the on-demand CVE lookup over
 # public HTTPS, and the notification webhooks in src/notify.rs. Webhook requests can carry a
 # bearer token, so secrets DO travel over this TLS stack. Certificates are verified against
 # webpki-roots. Review on every bump.
-rustls-rustcrypto = "=0.1.0-pre.0"
-snmp2 = { version = "0.5.3", default-features = false, features = ["tokio", "crypto-rust"] }
-tokio-rustls = { version = "0.26", default-features = false, features = ["tls12"] }
-webpki-roots = "1.0"
+rustls-rustcrypto = { version = "=0.1.0-pre.0", optional = true }
+tokio-rustls = { version = "0.26", default-features = false, features = ["tls12"], optional = true }
+webpki-roots = { version = "1.0", optional = true }
+
+# Extensions are cargo features (docs/ARCHITECTURE.md section 3.5). In 0.x all are on by default,
+# so a normal build loses nothing. `cargo build --no-default-features` builds the core alone, with
+# no TLS stack and no SNMP. The core never imports an extension.
+[features]
+default = ["router-audit", "cve", "alerts"]
+# Active router probes: UPnP, SNMP, TR-064, OpenWrt, MikroTik, HTTP banner, gateway port scan.
+router-audit = ["dep:md-5", "dep:snmp2"]
+# On-demand CVE / CISA KEV lookup over HTTPS.
+cve = ["tls"]
+# Webhook / ntfy alerts.
+alerts = ["tls"]
+# Internal: the TLS stack. Do not select it; `cve` and `alerts` turn it on.
+tls = ["dep:rustls", "dep:rustls-rustcrypto", "dep:tokio-rustls", "dep:webpki-roots"]
 
 [dev-dependencies]
 tempfile = "3.27.0"

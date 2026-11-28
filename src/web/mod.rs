@@ -95,14 +95,18 @@ pub(crate) struct AppState {
     /// Serialises report analyses so parallel viewers share one result.
     pub report_build: Arc<tokio::sync::Mutex<()>>,
     /// Cached result of the most recent passive/active router audit.
-    pub router_audit: Arc<tokio::sync::Mutex<Option<crate::router_audit::RouterAudit>>>,
+    pub router_audit: Arc<tokio::sync::Mutex<Option<crate::router::RouterAudit>>>,
     /// Time of the last active router probe (rate limit).
+    #[cfg_attr(not(feature = "router-audit"), allow(dead_code, reason = "used by the router-audit routes"))]
     pub last_probe: Arc<std::sync::Mutex<Option<std::time::Instant>>>,
     /// Time of the last CVE lookup (rate limit).
+    #[cfg_attr(not(feature = "cve"), allow(dead_code, reason = "used by the cve route"))]
     pub last_cve: Arc<std::sync::Mutex<Option<std::time::Instant>>>,
     /// Optional explicit UPnP IGD URL from `[router] upnp_url`.
+    #[cfg_attr(not(feature = "router-audit"), allow(dead_code, reason = "used by the router-audit routes"))]
     pub router_upnp_url: Option<Arc<str>>,
     /// Optional NVD API key from `[router] nvd_api_key`.
+    #[cfg_attr(not(feature = "cve"), allow(dead_code, reason = "used by the cve route"))]
     pub nvd_api_key: Option<Arc<str>>,
     /// Read access without a token (see [`WebRouterOpts::open_view`]).
     pub open_view: bool,

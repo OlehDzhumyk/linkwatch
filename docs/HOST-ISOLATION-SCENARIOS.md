@@ -49,7 +49,7 @@ Instead of relying solely on coarse 10-second CPU averages or static boot-time c
 - **What happens:** OS updates, cloud backup, or large downloads run *on the monitor host itself* (outside `linkwatch`'s built-in speedtest), causing latency spikes or short drops that look like idle ISP bufferbloat or Wi-Fi failure.
 - **Signals:**
   - Compare `rx_delta + tx_delta` (bytes/s on the probe interface) against sustained bulk thresholds (e.g., `> 10 Mbit/s` for `>= 3 s`), tagged `self_traffic_active = true` alongside existing `speedtest_active`.
-- **Mapping:** Suppress unprovoked ISP/router outage claims during `self_traffic_active`; feed `advice.rs` ("heavy traffic on monitor host itself") and exclude from idle baseline RTT.
+- **Mapping:** Suppress unprovoked ISP/router outage claims during `self_traffic_active`; feed `router/advice.rs` ("heavy traffic on monitor host itself") and exclude from idle baseline RTT.
 
 ### H5. Cross-Device Antenna / Adapter Bias in Multi-Room `Compare`
 - **What happens:** Stationary anchor (internal PCB antenna or USB dongle) reads `−58 dBm` at a spot while a laptop reads `−66 dBm` right beside it; comparing Bedroom 2 (`laptop`) vs Kitchen (`anchor`) conflates room attenuation with hardware sensitivity difference.
@@ -81,7 +81,7 @@ Instead of relying solely on coarse 10-second CPU averages or static boot-time c
 - **Signals:**
   - `/sys/class/net/<if>/speed`, `/sys/class/net/<if>/duplex`.
   - Deltas of `rx_crc_errors`, `rx_frame_errors`, `tx_aborted_errors`, `rx_dropped` per minute.
-- **Mapping:** If `rx_crc_errors > 0` or duplex != `full` or speed drops during outages -> emit `wired_cable_or_nic_error` in `advice.rs` and attribute to physical patch cable / NIC rather than router WAN or ISP.
+- **Mapping:** If `rx_crc_errors > 0` or duplex != `full` or speed drops during outages -> emit `wired_cable_or_nic_error` in `router/advice.rs` and attribute to physical patch cable / NIC rather than router WAN or ISP.
 
 ### H10. Running NTP Daemon Directory Exists While Kernel Clock Is Unsynced (`STA_UNSYNC`)
 - **What happens:** `host::clock_sync_source()` sees `/run/chrony` directory exists and reports `clock_synced = true`, even though `chronyd` lost upstream NTP reachability (e.g. during ISP outage or firewall block) and drifted 12 seconds.
@@ -203,7 +203,7 @@ Each analyzed session produces an explicit **Observer Trust Score**:
 | **P0** | Per-iface `rp_filter` check (`max(all, dev)`) + NIC CRC/duplex/carrier_changes reading + USB autosuspend check in `check` | H3, H8, H9 |
 | **P0** | Passive `mono_ns` tick-slip detector -> auto `overrun`, plus kernel NTP `STA_UNSYNC` truthfulness | H1, H10 |
 | **P1** | `nl80211` external `CMD_TRIGGER_SCAN` listener + `self_traffic_active` (`rx_delta + tx_delta`) flag in `Sample`/`analyze` | H4, H6 |
-| **P1** | Observer Trust Score (`Clean | Caution | Polluted`) wired into `analyze::Report`, `advice.rs`, and `support_report` | H1–H12 |
+| **P1** | Observer Trust Score (`Clean | Caution | Polluted`) wired into `analyze::Report`, `router/advice.rs`, and `support_report` | H1–H12 |
 | **P2** | `linkwatch check --deep` (5 s loopback jitter + simultaneous dual-path RX-counter proof + VPN check) | H1, H7, H8 |
 | **P3** | `linkwatch calibrate` (single baseline + co-located two-probe `ΔRSSI` / `ΔRTT` / clock skew `calibration.json`) | H5, H10 |
 

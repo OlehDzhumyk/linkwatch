@@ -3,23 +3,25 @@
 #![forbid(unsafe_code)]
 
 mod agg;
-mod advice;
 mod analyze;
 mod check;
 mod classify;
 mod compare;
 mod config;
 mod control;
-mod cve;
 mod host;
 mod lan;
 mod link;
 mod live;
 mod model;
+#[cfg(feature = "alerts")]
+mod notify;
+// Same API without the TLS stack, so `run` has one code path (see the file header).
+#[cfg(not(feature = "alerts"))]
+#[path = "notify_off.rs"]
 mod notify;
 mod probe;
 mod router;
-mod router_audit;
 mod run;
 mod security;
 mod session;
@@ -28,6 +30,9 @@ mod speed;
 mod store;
 mod support_report;
 mod verdict;
+// The TLS client of `cve` and `alerts`.
+#[cfg(feature = "tls")]
+mod tls;
 mod web;
 mod wifi;
 

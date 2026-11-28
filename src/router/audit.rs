@@ -4,11 +4,12 @@
 //! Credentials passed in [`RouterProbeRequest`] live strictly in memory for the duration of a single
 //! probe and are never logged, written to disk, or returned in responses.
 
-use crate::router::{HttpUrl, http_exchange_raw, probe_upnp_meta, xml_tag_text};
+use super::types::{AdapterExtra, PortCheck, RouterAudit};
+use super::{HttpUrl, http_exchange_raw, probe_upnp_meta, xml_tag_text};
 use base64_encode::encode as base64_std;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use md5::{Digest, Md5};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use snmp2::{AsyncSession, Oid, Value};
 use std::collections::HashMap;
 use std::fmt;
@@ -73,40 +74,6 @@ impl fmt::Debug for RouterProbeRequest {
             .field("community", &self.community.as_ref().map(|_| "[redacted]"))
             .finish()
     }
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
-pub struct PortCheck {
-    pub port: u16,
-    pub service: String,
-    pub open: bool,
-    /// "high" | "warn" | "info" | "none"
-    pub risk: String,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
-pub struct AdapterExtra {
-    pub label: String,
-    pub value: String,
-}
-
-#[derive(Debug, Clone, Serialize, Default)]
-#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
-pub struct RouterAudit {
-    pub probed_at: DateTime<Utc>,
-    pub gateway_ip: Option<String>,
-    pub gateway_mac: Option<String>,
-    pub adapter_used: String,
-    pub vendor: Option<String>,
-    pub model: Option<String>,
-    pub firmware: Option<String>,
-    pub admin_url: Option<String>,
-    pub uptime_s: Option<u64>,
-    pub ports: Vec<PortCheck>,
-    pub details: Vec<AdapterExtra>,
-    pub warnings: Vec<String>,
 }
 
 /// Validates a user-supplied target host: only private, loopback, or link-local IPv4 is accepted

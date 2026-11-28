@@ -84,6 +84,20 @@ cargo build --release --locked
 cargo build --release --locked --target aarch64-unknown-linux-musl
 ```
 
+#### Cargo features
+
+Three extensions are cargo features. All are in `default`, so a normal build has them.
+
+| Feature | What it adds | Crates |
+|---|---|---|
+| `router-audit` | Router probes (UPnP, SNMP, TR-064, OpenWrt, MikroTik, HTTP banner) and the gateway port check | `snmp2`, `md-5` |
+| `cve` | On-demand CVE / CISA KEV lookup over HTTPS | TLS stack |
+| `alerts` | Webhook / ntfy alerts | TLS stack |
+
+The TLS stack is `rustls`, `rustls-rustcrypto`, `tokio-rustls` and `webpki-roots`. Only `cve` and `alerts` need it. To build the core alone, run `cargo build --release --locked --no-default-features`. To keep some features, run for example `cargo build --release --locked --no-default-features --features alerts`.
+
+A config file works in every build. In a build without a feature, its section is still read. The web endpoint of that feature answers `404` with "not built with the `…` feature". `linkwatch check` skips the gateway port item, with a note.
+
 To develop the Web UI (Node 20+):
 
 ```sh

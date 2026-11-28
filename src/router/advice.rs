@@ -1,9 +1,9 @@
 //! Pure rule-based configuration and security advisor: turns live Wi-Fi, scan, host,
 //! and router diagnostics into concrete, actionable recommendations.
 
+use super::RouterAudit;
 use crate::live::LiveSnapshot;
 use crate::model::Verdict;
-use crate::router_audit::RouterAudit;
 use crate::wifi::freq_to_channel;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
@@ -365,7 +365,7 @@ mod tests {
     use super::*;
     use crate::live::IfaceLive;
     use crate::model::*;
-    use crate::router_audit::PortCheck;
+    use crate::router::PortCheck;
 
     #[test]
     fn flags_classic_wifi_and_port_misconfigurations() {

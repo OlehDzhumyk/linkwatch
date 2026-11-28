@@ -36,6 +36,9 @@ jobs:
         run: cargo clippy --locked --all-targets -- -D warnings
       - name: Tests
         run: cargo test --locked --release
+      # The core alone must build: no TLS stack, no SNMP (docs/ARCHITECTURE.md section 3.5).
+      - name: Build without extension features
+        run: cargo build --locked --no-default-features
       # cargo test rewrites the TypeScript bindings of the API (ts-rs); they must be committed.
       - name: API bindings are current
         run: |

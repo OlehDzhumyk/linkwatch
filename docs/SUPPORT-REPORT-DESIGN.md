@@ -144,7 +144,7 @@
 
 ### Module Boundary (`src/support_report.rs`)
 - Pure-Rust synthesis & formatting module (`#![forbid(unsafe_code)]`), zero duplicated fault-detection rules.
-- Consumes outputs from `analyze::Analyzer`, `compare::compare`, `advice::evaluate`, `router_audit::RouterAudit`, `cve::CveLookupResponse`, and `site::Site` (`RfPathEstimate`).
+- Consumes outputs from `analyze::Analyzer`, `compare::compare`, `router::advice::evaluate`, `router::RouterAudit`, `router::CveLookupResponse`, and `site::Site` (`RfPathEstimate`).
 - Core types (`ts_rs::TS` exported where needed by Web UI):
   - `SupportAudience`: `Isp | Landlord | Admin`
   - `RedactionLevel`: `None | Standard | Strict`

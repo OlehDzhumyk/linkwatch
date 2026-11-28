@@ -365,7 +365,7 @@ it loads data.
 | D2 | Phone navigation: bottom tab bar or top scrollable tabs? | Bottom bar (thumb reach, header stays one row) |
 | D3 | Use CSS `light-dark()` (Chrome 123+, Safari 17.5+, Firefox 120+) to define colours once? Old browsers would get the light theme only. | Yes |
 | D4 | Replace the topology SVG with an HTML path strip (wraps on phone, translatable labels)? | Yes |
-| D5 | Server prose (verdict summary, findings, advice, warnings, event text) → add stable `code` + `args` to the API next to the English `text`, and translate in the UI. This is a backend change in `api.rs`, `advice.rs`, `analyze`, `router_audit.rs`. | Yes, in a separate step before the UI rewrite |
+| D5 | Server prose (verdict summary, findings, advice, warnings, event text) → add stable `code` + `args` to the API next to the English `text`, and translate in the UI. This is a backend change in `api.rs`, `router/advice.rs`, `analyze`, `router/audit.rs`. | Yes, in a separate step before the UI rewrite |
 | D6 | Read access: today a configured token gates **everything**. Earlier the owner wanted open viewing and token-only control. Add `[web] view = "open" \| "token"` (default `token`)? | Yes |
 | D7 | Router audit + CVE lookup: keep in the UI under Diagnostics › Audit (collapsed, token only), or remove from the UI and keep as CLI? | Keep, collapsed |
 | D8 | Masked BSSIDs/MACs on screen by default (click to reveal)? | Yes |

@@ -3,6 +3,15 @@
 //! Zero external crates or subprocesses: uses a tiny bounded SSDP M-SEARCH + HTTP/1.1 + SOAP XML
 //! client with explicit timeouts on every socket call and no `unsafe` code.
 
+pub mod advice;
+#[cfg(feature = "router-audit")]
+pub mod audit;
+#[cfg(feature = "cve")]
+pub mod cve;
+pub mod types;
+
+pub use types::{CveLookupResponse, PortCheck, RouterAudit};
+
 use crate::config::Router as RouterConfig;
 use crate::model::RouterSample;
 use anyhow::{Context, bail};
@@ -104,6 +113,7 @@ pub struct IgdEndpoints {
 }
 
 #[derive(Debug, Clone, Default)]
+#[cfg_attr(not(feature = "router-audit"), allow(dead_code, reason = "firmware_hint and admin_url feed the router-audit UPnP adapter"))]
 pub(crate) struct UpnpMeta {
     pub vendor: Option<String>,
     pub model: Option<String>,

@@ -1,9 +1,9 @@
 use super::*;
 use crate::analyze::{BandStats, IfaceReport, LanReport, Msg, Report, RouterReport, parse_router_log};
 use crate::session::SessionResult;
-use crate::cve::CveItem;
+use crate::router::types::CveItem;
 use crate::model::{IncidentOrigin, IfaceRole, NetworkFingerprint, PathState, SessionMeta, Verdict};
-use crate::router_audit::PortCheck;
+use crate::router::PortCheck;
 use chrono::{Duration, Utc};
 use std::collections::BTreeMap;
 use std::net::Ipv4Addr;
