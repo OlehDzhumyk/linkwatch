@@ -22,6 +22,11 @@ each item.
   tests, scans, overruns and heavy own traffic do not count. The limits are in
   `analyze/limits.rs`. `IfaceReport` has the new fields `degraded_ticks` and
   `degraded_longest_s` (omitted when zero).
+- **Headline counts only network-caused incidents:** the dominant cause in `verdict::headline`
+  now counts an episode only when its attribution is `network`, `network_despite_host` or
+  `mixed`. Episodes with `observer_likely`, `observer_confirmed` or `inconclusive` never set the
+  headline layer (before, only origin `observer` and load-provoked episodes were skipped).
+  `expect.json` of the golden sessions now also holds the headline.
 
 ## [0.12.0] - 2026-11-28
 

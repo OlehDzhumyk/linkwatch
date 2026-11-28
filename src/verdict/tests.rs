@@ -2,6 +2,7 @@
 //! cause. The English texts are part of the web API, so they are compared in full.
 
 use super::*;
+use crate::analyze::attribution::Attribution;
 use crate::analyze::{Episode, IfaceReport};
 use crate::model::PathState;
 use chrono::{DateTime, Duration, Utc};
@@ -208,4 +209,41 @@ fn mixed_loses_a_tie_to_a_concrete_layer() {
     // More Mixed episodes beat one concrete episode.
     let eps = vec![net_ep(Verdict::Mixed, 10), net_ep(Verdict::Mixed, 10), net_ep(Verdict::LineProblem, 10)];
     assert_eq!(dominant_cause(&report(vec![], eps, 0, 0)), Some(Verdict::Mixed));
+}
+
+fn attributed(cause: Verdict, secs: i64, attribution: Attribution) -> Episode {
+    let mut e = net_ep(cause, secs);
+    e.finding.attribution = attribution;
+    e
+}
+
+#[test]
+fn dominant_cause_counts_only_network_caused_attributions() {
+    // The long line episode would win by duration. The short DNS episode is a plain network
+    // incident. The line episode counts only when its attribution keeps it as a network incident.
+    let cases = [
+        (Attribution::Network, Verdict::LineProblem),
+        (Attribution::NetworkDespiteHost, Verdict::LineProblem),
+        (Attribution::Mixed, Verdict::LineProblem),
+        (Attribution::ObserverLikely, Verdict::Dns),
+        (Attribution::ObserverConfirmed, Verdict::Dns),
+        (Attribution::Inconclusive, Verdict::Dns),
+    ];
+    for (attribution, want) in cases {
+        let eps = vec![attributed(Verdict::LineProblem, 600, attribution), net_ep(Verdict::Dns, 10)];
+        assert_eq!(dominant_cause(&report(vec![], eps, 0, 0)), Some(want), "attribution {attribution:?}");
+    }
+}
+
+#[test]
+fn only_excluded_attributions_leave_no_dominant_cause() {
+    for attribution in [Attribution::ObserverLikely, Attribution::ObserverConfirmed, Attribution::Inconclusive] {
+        let eps = vec![attributed(Verdict::RouterProblem, 300, attribution)];
+        assert_eq!(dominant_cause(&report(vec![], eps.clone(), 1, 0)), None, "attribution {attribution:?}");
+        // The headline then falls back to the interface count, not to the excluded cause.
+        let r = report(vec![iface(IfaceRole::Wifi, None), iface(IfaceRole::Ethernet, None)], eps, 1, 0);
+        let h = headline(&r, None);
+        assert_eq!(h.verdict, Some(Verdict::AllOk), "attribution {attribution:?}");
+        assert_eq!(h.code, "all_ok_earlier");
+    }
 }

@@ -57,6 +57,10 @@
     "eth0": 1,
     "wlo1": 3
   },
+  "headline": {
+    "code": "line",
+    "verdict": "line_problem"
+  },
   "incidents": {
     "line_problem": 1,
     "wifi_problem": 1

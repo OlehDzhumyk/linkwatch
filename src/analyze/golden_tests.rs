@@ -4,6 +4,8 @@
 //! `--reclassify` (recorded states recomputed by the current classifier).
 //! Next to each summary, `snapshot.json` / `snapshot-reclassified.json` hold the whole `Report`
 //! (floats rounded), so a refactor that changes any output field fails (docs/ARCHITECTURE.md R0).
+//! `expect.json` also holds the headline (layer verdict and message code) that `verdict::headline`
+//! gives without a live verdict.
 //! Set `LINKWATCH_UPDATE_GOLDEN=1` to rewrite the expectation files.
 
 use super::*;
@@ -51,7 +53,9 @@ fn summarize(r: &Report) -> Value {
             })
         })
         .collect();
+    let headline = crate::verdict::headline(r, None);
     json!({
+        "headline": {"verdict": to_json(&headline.verdict), "code": headline.code},
         "episodes_per_iface": per_iface,
         "network_incidents": r.network_incidents,
         "observer_incidents": r.observer_incidents,

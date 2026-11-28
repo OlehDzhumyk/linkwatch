@@ -57,6 +57,10 @@
     "eth0": 1,
     "wlo1": 3
   },
+  "headline": {
+    "code": "internet",
+    "verdict": "internet_problem"
+  },
   "incidents": {
     "internet_problem": 1,
     "wifi_problem": 1

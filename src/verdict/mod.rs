@@ -5,22 +5,24 @@
 //! shows no headline verdict. The support pack words its headline from compare evidence, not from
 //! a layer verdict, so it does not use this module (see `support_report::build_pack`).
 //!
-//! # Rule that runs today
+//! # Rule
+//!
+//! The *layer verdict* says where the path broke. The *attribution* (`Episode::finding`) says
+//! whether the network is to blame and how sure the analyzer is. The headline uses the layer
+//! verdict of the incidents that the attribution keeps as network-caused.
 //!
 //! 1. The layer verdict is the live verdict, if the caller has one.
 //! 2. Otherwise it is the most frequent `Episode::cause` (ties: more outage seconds, then the
-//!    later verdict in `key_of` order). Observer-origin episodes, load-provoked episodes and the
-//!    causes `AllOk` and `Unknown` do not count.
+//!    later verdict in `key_of` order, so `Mixed` loses every tie) among the episodes that count.
+//!    An episode counts only when all of these hold:
+//!    - its attribution is `Network`, `NetworkDespiteHost` or `Mixed`. `ObserverLikely`,
+//!      `ObserverConfirmed` and `Inconclusive` never set the headline layer: the first two blame
+//!      the observer host, and an inconclusive incident cannot judge the element it would blame;
+//!    - its origin is not `Observer`;
+//!    - it is not load-provoked (a short outage during the monitor's own speed test);
+//!    - its cause is neither `AllOk` nor `Unknown`.
 //! 3. Otherwise it is `SinglePath` for a report with one interface, `AllOk` for more than one,
 //!    and none for a report with no interface.
-//!
-//! # Planned rule (R8, not implemented)
-//!
-//! The *layer verdict* says where the path broke. The *attribution* says whether the network is
-//! to blame and how sure the analyzer is. The headline will use the layer verdict of the incidents
-//! that the attribution keeps as network incidents. An observer incident or an inconclusive
-//! incident will never set the headline layer. Today step 2 looks only at origin, load and cause,
-//! not at the attribution (`Episode::finding`).
 
 use crate::analyze::{Report, is_load_provoked};
 use crate::model::{IfaceRole, IncidentOrigin, Verdict};
@@ -113,7 +115,7 @@ fn dominant_cause(rep: &Report) -> Option<Verdict> {
         Verdict::Unknown => 9,
     };
     for ep in &rep.episodes {
-        if ep.origin == IncidentOrigin::Observer || is_load_provoked(ep) {
+        if ep.origin == IncidentOrigin::Observer || is_load_provoked(ep) || !ep.finding.attribution.is_network_caused() {
             continue;
         }
         let Some(c) = ep.cause else { continue };

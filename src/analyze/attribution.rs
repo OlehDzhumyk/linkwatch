@@ -75,6 +75,13 @@ impl Attribution {
     pub fn is_observer(self) -> bool {
         matches!(self, Self::ObserverLikely | Self::ObserverConfirmed)
     }
+
+    /// True when the attribution keeps the incident as network-caused, so its layer verdict may
+    /// set the headline (`verdict::headline`). `Inconclusive` is not: the analyzer could not judge
+    /// the element that the layer verdict blames.
+    pub fn is_network_caused(self) -> bool {
+        matches!(self, Self::Network | Self::NetworkDespiteHost | Self::Mixed)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
