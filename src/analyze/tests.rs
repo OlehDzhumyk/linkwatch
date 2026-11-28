@@ -1,6 +1,7 @@
 use super::*;
 use super::detect::*;
 use super::engine::*;
+use super::stages::observer::{TrustInputs, observer_trust};
 
 fn env(ts: DateTime<Utc>, rec: Record) -> Envelope {
     Envelope { v: 1, run: "r".into(), seq: 0, ts, mono_ns: 0, rec }
