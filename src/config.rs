@@ -96,10 +96,23 @@ pub struct Intervals {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Classify {
-    /// Consecutive ticks with the same state before a state change is recorded.
-    pub debounce: u32,
-    /// Window (ticks) for loss/latency evaluation of Degraded.
-    pub window: u32,
+    /// Time in seconds a new state must hold before a state change is recorded (default 3.0).
+    /// Independent of the probe interval: the tick count is derived from it.
+    /// Precedence: `debounce_s` if set, else the deprecated `debounce` (ticks), else 3.0 s.
+    pub debounce_s: Option<f64>,
+    /// Time in seconds of the loss/latency window for Degraded (default 30.0).
+    /// Precedence: `window_s` if set, else the deprecated `window` (ticks), else 30.0 s.
+    pub window_s: Option<f64>,
+    /// DEPRECATED. Debounce in probe ticks. Used only when `debounce_s` is not set.
+    pub debounce: Option<u32>,
+    /// DEPRECATED. Window in probe ticks. Used only when `window_s` is not set.
+    pub window: Option<u32>,
+    /// Effective debounce in ticks. Computed by `resolve`; not a config key.
+    #[serde(skip)]
+    pub debounce_ticks: u32,
+    /// Effective window in ticks. Computed by `resolve`; not a config key.
+    #[serde(skip)]
+    pub window_ticks: u32,
     pub degraded_loss_pct: f64,
     pub degraded_gw_rtt_ms: f64,
     pub degraded_net_rtt_ms: f64,
@@ -268,7 +281,52 @@ impl Default for Intervals {
 
 impl Default for Classify {
     fn default() -> Self {
-        Self { debounce: 3, window: 30, degraded_loss_pct: 2.0, degraded_gw_rtt_ms: 50.0, degraded_net_rtt_ms: 150.0 }
+        Self {
+            debounce_s: None,
+            window_s: None,
+            debounce: None,
+            window: None,
+            debounce_ticks: 3,
+            window_ticks: 30,
+            degraded_loss_pct: 2.0,
+            degraded_gw_rtt_ms: 50.0,
+            degraded_net_rtt_ms: 150.0,
+        }
+    }
+}
+
+impl Classify {
+    pub const DEFAULT_DEBOUNCE_S: f64 = 3.0;
+    pub const DEFAULT_WINDOW_S: f64 = 30.0;
+
+    /// Effective debounce in seconds (see the precedence rule on the fields).
+    pub fn debounce_secs(&self, probe_ms: u64) -> f64 {
+        Self::secs(self.debounce_s, self.debounce, Self::DEFAULT_DEBOUNCE_S, probe_ms)
+    }
+
+    /// Effective window in seconds (see the precedence rule on the fields).
+    pub fn window_secs(&self, probe_ms: u64) -> f64 {
+        Self::secs(self.window_s, self.window, Self::DEFAULT_WINDOW_S, probe_ms)
+    }
+
+    fn secs(secs: Option<f64>, ticks: Option<u32>, default: f64, probe_ms: u64) -> f64 {
+        match (secs, ticks) {
+            (Some(s), _) => s,
+            (None, Some(t)) => f64::from(t) * probe_ms as f64 / 1000.0,
+            (None, None) => default,
+        }
+    }
+
+    fn to_ticks(secs: f64, probe_ms: u64) -> u32 {
+        let tick_s = (probe_ms.max(1)) as f64 / 1000.0;
+        // `as` saturates; NaN becomes 0 and is raised to 1. validate() rejects such values.
+        ((secs / tick_s).round() as u32).max(1)
+    }
+
+    /// Compute the tick counts the classifier uses: max(1, round(seconds / tick_s)).
+    pub fn resolve(&mut self, probe_ms: u64) {
+        self.debounce_ticks = Self::to_ticks(self.debounce_secs(probe_ms), probe_ms);
+        self.window_ticks = Self::to_ticks(self.window_secs(probe_ms), probe_ms);
     }
 }
 
@@ -336,7 +394,12 @@ impl Config {
             }
         }
         user.insert("intervals".into(), toml::Value::Table(merged));
-        Ok(toml::Value::Table(user).try_into()?)
+        let mut cfg: Config = toml::Value::Table(user).try_into()?;
+        if cfg.classify.debounce.is_some() || cfg.classify.window.is_some() {
+            tracing::warn!("config: classify.debounce and classify.window (ticks) are deprecated; use debounce_s and window_s (seconds)");
+        }
+        cfg.classify.resolve(cfg.intervals.probe_ms);
+        Ok(cfg)
     }
 
     pub fn validate(&self) -> anyhow::Result<()> {
@@ -345,8 +408,8 @@ impl Config {
             self.intervals.probe_timeout_ms < self.intervals.probe_ms,
             "intervals.probe_timeout_ms must be < probe_ms"
         );
-        anyhow::ensure!(self.classify.debounce >= 1, "classify.debounce must be >= 1");
-        anyhow::ensure!(self.classify.window >= 1, "classify.window must be >= 1");
+        anyhow::ensure!(self.classify.debounce.is_none_or(|v| v >= 1), "classify.debounce must be >= 1");
+        anyhow::ensure!(self.classify.window.is_none_or(|v| v >= 1), "classify.window must be >= 1");
         anyhow::ensure!(!self.targets.internet.is_empty() || !self.targets.tcp.is_empty(), "need at least one internet target");
         let mut names = std::collections::HashSet::new();
         for i in &self.interfaces {
@@ -369,8 +432,16 @@ impl Config {
         }
         anyhow::ensure!(iv.lan_s == 0 || iv.lan_s >= 60, "intervals.lan_s must be 0 (off) or >= 60");
         anyhow::ensure!((1..=60).contains(&iv.heartbeat_s), "intervals.heartbeat_s must be 1..=60 (the systemd watchdog is fed with it)");
-        anyhow::ensure!(c.debounce <= 1000, "classify.debounce must be <= 1000");
-        anyhow::ensure!(c.window <= 3600, "classify.window must be <= 3600");
+        anyhow::ensure!(c.debounce.is_none_or(|v| v <= 1000), "classify.debounce must be <= 1000");
+        anyhow::ensure!(c.window.is_none_or(|v| v <= 3600), "classify.window must be <= 3600");
+        for (name, v, max) in [("debounce_s", c.debounce_s, 600.0), ("window_s", c.window_s, 3600.0)] {
+            if let Some(v) = v {
+                anyhow::ensure!(v.is_finite() && v > 0.0 && v <= max, "classify.{name} must be > 0 and <= {max}");
+            }
+        }
+        // Tick-based values (old files) are bounded in seconds too: ticks x probe interval.
+        anyhow::ensure!(c.debounce_secs(iv.probe_ms) <= 600.0, "classify.debounce is longer than 600 s at this probe interval");
+        anyhow::ensure!(c.window_secs(iv.probe_ms) <= 3600.0, "classify.window is longer than 3600 s at this probe interval");
         for (name, v) in [("degraded_loss_pct", c.degraded_loss_pct), ("degraded_gw_rtt_ms", c.degraded_gw_rtt_ms), ("degraded_net_rtt_ms", c.degraded_net_rtt_ms)] {
             anyhow::ensure!(v.is_finite() && v > 0.0, "classify.{name} must be > 0");
         }
@@ -432,6 +503,47 @@ mod tests {
         assert_eq!(d.intervals.probe_ms, 500);
         d.validate().unwrap();
         assert!(Config::from_toml("profile = 'turbo'").is_err());
+    }
+
+    fn ticks(t: &str) -> (u32, u32) {
+        let c = Config::from_toml(t).unwrap();
+        c.validate().unwrap();
+        (c.classify.debounce_ticks, c.classify.window_ticks)
+    }
+
+    #[test]
+    fn classify_seconds_are_profile_independent() {
+        // Same wall-clock debounce and window on every profile: ticks = seconds / tick.
+        assert_eq!(ticks("profile = 'light'"), (1, 6)); // 3 s / 5 s = 0.6 -> 1
+        assert_eq!(ticks(""), (3, 30));
+        assert_eq!(ticks("profile = 'detailed'"), (6, 60));
+        for (p, tick_s) in [("light", 5.0), ("standard", 1.0), ("detailed", 0.5)] {
+            let (d, w) = ticks(&format!("profile = '{p}'\n[classify]\ndebounce_s = 10.0\nwindow_s = 60.0"));
+            assert!((f64::from(d) * tick_s - 10.0).abs() <= tick_s / 2.0, "{p}");
+            assert!((f64::from(w) * tick_s - 60.0).abs() <= tick_s / 2.0, "{p}");
+        }
+    }
+
+    #[test]
+    fn classify_old_tick_fields_still_work_and_seconds_win() {
+        // Old file: ticks kept as ticks, whatever the profile.
+        assert_eq!(ticks("profile = 'light'\n[classify]\ndebounce = 4\nwindow = 20"), (4, 20));
+        assert_eq!(ticks("profile = 'detailed'\n[classify]\ndebounce = 4\nwindow = 20"), (4, 20));
+        // Seconds win over ticks, per field.
+        assert_eq!(ticks("[classify]\ndebounce = 9\ndebounce_s = 2.0\nwindow = 20"), (2, 20));
+        // Sub-tick values are raised to one tick.
+        assert_eq!(ticks("[classify]\ndebounce_s = 0.1").0, 1);
+    }
+
+    #[test]
+    fn classify_bad_seconds_rejected() {
+        for t in ["debounce_s = 0.0", "debounce_s = -1.0", "window_s = 0.0", "debounce_s = 601.0", "window_s = 3601.0", "debounce = 0", "debounce = 1001"] {
+            let c = Config::from_toml(&format!("[classify]\n{t}")).unwrap();
+            assert!(c.validate().is_err(), "{t}");
+        }
+        // Old ticks that exceed the seconds bound at a slow probe interval.
+        let c = Config::from_toml("profile = 'light'\n[classify]\nwindow = 3600").unwrap();
+        assert!(c.validate().is_err());
     }
 
     #[test]
