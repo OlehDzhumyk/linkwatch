@@ -75,7 +75,7 @@ enum Cmd {
     /// Print the effective configuration as TOML.
     Config,
     /// Measure the idle baseline of this device and its paths (gateway RTT, loss, NIC errors,
-    /// timer jitter) and write it to <data_dir>/calibration.json.
+    /// timer jitter) and write it to <data_dir>/calibration.json (informational: not yet used by analyze/compare).
     Calibrate {
         /// Duration of the baseline in seconds (at least 5).
         #[arg(long, default_value_t = 60)]
@@ -184,6 +184,7 @@ fn main() -> ExitCode {
                     Ok(()) => println!("written: {}", path.display()),
                     Err(e) => eprintln!("could not write {}: {e:#}", path.display()),
                 }
+                println!("informational: not yet used by analyze/compare");
                 Ok(ok)
             }
             Cmd::Sessions => {

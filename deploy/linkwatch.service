@@ -42,7 +42,12 @@ ProtectKernelTunables=yes
 ProtectControlGroups=yes
 RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK AF_UNIX
 LockPersonality=yes
+# Memory limit. The monitor also builds the full session analysis for the web UI in this
+# process. A session of many days may need more than 256M (not yet measured, see docs/ROADMAP.md).
+# If systemd kills the service for memory, raise this value in a drop-in file.
 MemoryMax=256M
+# Nice=-5 gives the probe loop a better CPU priority, so probe timing stays steady when the host
+# is busy. The trade-off: the web UI analysis in the same process also runs at this priority.
 Nice=-5
 
 [Install]

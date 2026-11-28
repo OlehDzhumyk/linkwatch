@@ -67,7 +67,7 @@ Step-by-step guide for a first measurement: [**docs/INSTALL.md**](docs/INSTALL.m
 
 ### 1. `.deb` package
 
-There are no published release files yet: build the package (section 2), then:
+Prebuilt `.deb` files may be attached to a release: see [Releases](https://github.com/OlehDzhumyk/linkwatch/releases). To build the package yourself, build the binary (section 2), then:
 
 ```sh
 packaging/build-deb.sh target/release/linkwatch     # -> target/deb/linkwatch_<version>_<arch>.deb
@@ -108,7 +108,7 @@ sudo deploy/install.sh
 sudo systemctl start linkwatch
 ```
 
-> **Dual-interface routing on one subnet:** Running Wi-Fi and Ethernet in the same LAN subnet requires `arp_ignore=1`, `arp_announce=2`, and loose `rp_filter` (configured by `deploy/90-linkwatch.conf` and verified by `linkwatch check`).
+> **Dual-interface routing on one subnet:** Running Wi-Fi and Ethernet in the same LAN subnet requires `arp_ignore=1`, `arp_announce=2`, and loose `rp_filter` (configured by `deploy/90-linkwatch.conf` and verified by `linkwatch check`). These ARP and `rp_filter` values apply to all interfaces of the host. See "Kernel settings" in [docs/INSTALL.md](docs/INSTALL.md) for what they change and how to remove them.
 
 ---
 
@@ -116,7 +116,7 @@ sudo systemctl start linkwatch
 
 ```sh
 linkwatch check [--deep]                               # preflight; --deep adds ~6 s of active self-tests
-linkwatch calibrate --seconds 60                       # idle baseline of every path -> calibration.json
+linkwatch calibrate --seconds 60                       # idle baseline of every path -> calibration.json (informational; not yet used by analyze/compare)
 linkwatch run --point B1/F2/R3                         # start monitoring loop + Web UI
 linkwatch sessions                                     # list recorded sessions
 linkwatch analyze /var/lib/linkwatch/<id> --router-log docsis.txt > report.md

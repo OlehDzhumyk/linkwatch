@@ -6,6 +6,16 @@ Design specifications for upcoming capabilities and how each should work safely 
 
 ---
 
+## Before 1.0
+
+- Validate verdicts on real recorded nights. Add golden tests built from them.
+- IPv6 probing. There is none today.
+- Published release binaries. The release workflow exists. See the GitHub Releases page for what it published.
+- Memory: measure a 7-day session on a Raspberry Pi, and make the live report incremental. The service has `MemoryMax=256M` and builds the full analysis in-process for the web UI. Long sessions may exceed it.
+- Freeze peripheral features until the core verdict is validated: RF wall model, CVE/KEV, SNMP/MikroTik adapters, rogue DHCP.
+
+---
+
 ## 1. Visual Site Layout Editor (Web UI)
 
 **Goal:** Create and edit building/unit floor plans directly in the browser without hand-writing TOML coordinates, while keeping `site.toml` as the single clean source of truth.

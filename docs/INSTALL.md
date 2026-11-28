@@ -34,9 +34,36 @@ sudo dpkg -i target/deb/linkwatch_<version>_<arch>.deb
 The package:
 - creates the system user `linkwatch`,
 - installs `/etc/linkwatch/linkwatch.toml` (it never overwrites your copy),
-- installs `/etc/sysctl.d/90-linkwatch.conf` (permission for unprivileged ping, and ARP
-  settings for two interfaces in one subnet),
+- installs `/etc/sysctl.d/90-linkwatch.conf` and applies it (see "Kernel settings" below),
 - enables `linkwatch.service`, but does **not** start it on the first install.
+
+### Kernel settings
+
+The file `/etc/sysctl.d/90-linkwatch.conf` sets these values:
+- `net.ipv4.ping_group_range = 0 2147483647`. This lets the service send ICMP echo without
+  root rights. `linkwatch check` reports `icmp permission` FAIL if this value is missing.
+- `net.ipv4.conf.all.arp_ignore = 1` and `net.ipv4.conf.all.arp_announce = 2`. The kernel
+  answers ARP only on the interface that owns the address.
+- `net.ipv4.conf.all.rp_filter = 2` and `net.ipv4.conf.default.rp_filter = 2`. The kernel
+  uses the loose reverse-path filter.
+
+The ARP and `rp_filter` values apply to all interfaces of the host. The monitor needs them
+only when Wi-Fi and Ethernet sit in the same subnet. On a typical home host they are safe.
+Many distributions use `rp_filter = 2` already. A host with one interface sees no change.
+A host that acts as a router or firewall can see a change. Check it before you install.
+
+To remove these settings:
+1. Run `sudo rm /etc/sysctl.d/90-linkwatch.conf`.
+2. Reboot the host, or set the old values by hand with `sysctl -w`.
+3. If you remove the `ping_group_range` line, the service cannot ping. Set it in another file.
+
+Removing the package does not reset the running values. They stay until the next reboot.
+
+### TLS and webhook tokens
+
+Warning: linkwatch uses `rustls-rustcrypto`. This crypto provider is a pre-release and has no
+audit. It protects two things: the CVE lookup and the `[alerts]` webhooks. A webhook bearer
+token travels over this TLS stack. Use a token that you can revoke. Do not reuse it elsewhere.
 
 ## 4. Configure
 
@@ -88,6 +115,7 @@ Optional, before a long run:
   disk pressure, and a proof that replies arrive on the interface that sent the probe.
 - `... calibrate --seconds 60` measures the idle noise of every path and writes
   `/var/lib/linkwatch/calibration.json`. Keep the device and the network idle while it runs.
+  The file is informational. `analyze` and `compare` do not read it yet.
 
 ## 6. Start the measurement
 
