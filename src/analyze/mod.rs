@@ -18,6 +18,8 @@ mod engine;
 mod markdown;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod attribution_tests;
 
 pub use engine::Analyzer;
 pub use markdown::to_markdown;
