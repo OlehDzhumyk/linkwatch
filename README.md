@@ -63,14 +63,17 @@ Every configured interface (`SO_BINDTODEVICE`) is probed across 7 layers simulta
 
 ## Quick Install
 
-### 1. Pre-built `.deb` packages or static binaries (GitHub Releases)
+Step-by-step guide for a first measurement: [**docs/INSTALL.md**](docs/INSTALL.md).
 
-Download the latest release from [GitHub Releases](https://github.com/OlehDzhumyk/linkwatch/releases) for `amd64` (`x86_64`) or `arm64` (`aarch64` / Raspberry Pi OS 64-bit), verify `SHA256SUMS.txt`, and install:
+### 1. `.deb` package
+
+There are no published release files yet: build the package (section 2), then:
 
 ```sh
-sudo dpkg -i linkwatch_<version>_amd64.deb   # or _arm64.deb
+packaging/build-deb.sh target/release/linkwatch     # -> target/deb/linkwatch_<version>_<arch>.deb
+sudo dpkg -i target/deb/linkwatch_<version>_amd64.deb   # or _arm64.deb
 sudo -u linkwatch linkwatch --config /etc/linkwatch/linkwatch.toml check
-sudo systemctl enable --now linkwatch
+sudo systemctl start linkwatch
 ```
 
 ### 2. Build from source (static musl or native release)
@@ -137,6 +140,7 @@ Old daily files compress automatically to `.jsonl.gz`.
 
 ## Documentation
 
+- [**Install and first measurement**](docs/INSTALL.md) — step-by-step guide for a new user.
 - [**Features & Architecture**](docs/FEATURES.md) — deep reference for probing, router adapters, advisor rules, CVE engine, site geometry, and every API endpoint.
 - [**Adding a UI Language (i18n)**](docs/I18N.md) — 3-step guide to adding new interface languages cleanly.
 - [**Roadmap & Planned Features**](docs/ROADMAP.md) — upcoming layout editor, extra adapters, and multi-observer UI compare.
