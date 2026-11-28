@@ -109,6 +109,22 @@ pub struct RouterSample {
     pub bytes_saturated: bool,
 }
 
+impl RouterSample {
+    /// True when the router reports that the WAN is not up.
+    ///
+    /// UPnP IGD values (compared case-insensitively):
+    /// - `ConnectionStatus` (WANIPConnection): Unconfigured, Connecting, Connected,
+    ///   PendingDisconnect, Disconnecting, Disconnected. Only `Connected` is up.
+    /// - `PhysicalLinkStatus` (WANCommonInterfaceConfig): Up, Down, Initializing, Unavailable.
+    ///   Only `Up` is up.
+    ///
+    /// A missing value is not "down": routers that do not report it stay silent.
+    pub fn wan_down(&self) -> bool {
+        self.wan_status.as_deref().is_some_and(|s| !s.eq_ignore_ascii_case("Connected"))
+            || self.phy_status.as_deref().is_some_and(|s| !s.eq_ignore_ascii_case("Up"))
+    }
+}
+
 /// Active device count on the local subnet (counts only; no addresses or MACs).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, optional_fields))]
@@ -447,6 +463,45 @@ pub struct SpeedResult {
     pub err: Option<String>,
 }
 
+/// Kind of an observer (host) alert. The JSON strings are the same as in old session files.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+#[serde(rename_all = "snake_case")]
+pub enum HostAlertKind {
+    HighCpu,
+    LowMemory,
+    DriverReset,
+    WifiPowerSave,
+    Undervoltage,
+    ThermalThrottle,
+    /// Any alert name this version does not know (for example from a newer version).
+    #[serde(other)]
+    Other,
+}
+
+impl HostAlertKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::HighCpu => "high_cpu",
+            Self::LowMemory => "low_memory",
+            Self::DriverReset => "driver_reset",
+            Self::WifiPowerSave => "wifi_power_save",
+            Self::Undervoltage => "undervoltage",
+            Self::ThermalThrottle => "thermal_throttle",
+            Self::Other => "other",
+        }
+    }
+}
+
+/// The interface of a host alert. Uses the typed `iface`. For old records without it,
+/// this is the one place that reads the `"<iface>: ..."` prefix of `detail`.
+pub fn host_alert_iface<'a>(iface: Option<&'a str>, detail: &'a str) -> Option<&'a str> {
+    iface.or_else(|| {
+        let end = detail.find([':', ' '])?;
+        (end > 0).then(|| &detail[..end])
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export, optional_fields))]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -483,7 +538,14 @@ pub enum EventKind {
         timed_out: bool,
     },
     /// Observer (measuring host) health alert (throttling, high CPU, low RAM, driver reset, power-save).
-    HostAlert { alert: String, detail: String },
+    HostAlert {
+        alert: HostAlertKind,
+        /// Free text for people. Do not parse it: use `iface`.
+        detail: String,
+        /// Interface the alert is about. Old session files have none: use `host_alert_iface`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        iface: Option<String>,
+    },
     /// Passive security anomaly detected on the local network.
     Security {
         detector: String,
@@ -628,6 +690,40 @@ mod tests {
     use super::*;
 
     #[test]
+    fn old_host_alert_json_still_parses() {
+        let line = r#"{"kind":"host_alert","alert":"driver_reset","detail":"wlo1: kernel ifindex changed 2 -> 5"}"#;
+        let ev: EventKind = serde_json::from_str(line).unwrap();
+        let EventKind::HostAlert { alert, detail, iface } = ev else { panic!("wrong kind") };
+        assert_eq!(alert, HostAlertKind::DriverReset);
+        assert_eq!(iface, None);
+        assert_eq!(host_alert_iface(iface.as_deref(), &detail), Some("wlo1"));
+        let unknown: EventKind = serde_json::from_str(r#"{"kind":"host_alert","alert":"future_thing","detail":"x"}"#).unwrap();
+        assert!(matches!(unknown, EventKind::HostAlert { alert: HostAlertKind::Other, .. }));
+        let new = EventKind::HostAlert { alert: HostAlertKind::DriverReset, detail: "d".into(), iface: Some("wlo1".into()) };
+        let json = serde_json::to_string(&new).unwrap();
+        assert!(json.contains(r#""alert":"driver_reset""#) && json.contains(r#""iface":"wlo1""#));
+        let no_iface = serde_json::to_string(&EventKind::HostAlert { alert: HostAlertKind::HighCpu, detail: "d".into(), iface: None }).unwrap();
+        assert!(!no_iface.contains("iface"));
+    }
+
+    #[test]
+    fn wan_down_matches_upnp_values_case_insensitively() {
+        let mk = |wan: Option<&str>, phy: Option<&str>| RouterSample {
+            wan_status: wan.map(Into::into),
+            phy_status: phy.map(Into::into),
+            ..Default::default()
+        };
+        assert!(!mk(None, None).wan_down());
+        assert!(!mk(Some("Connected"), Some("Up")).wan_down());
+        assert!(!mk(Some("connected"), Some("UP")).wan_down());
+        assert!(mk(Some("Disconnected"), Some("Up")).wan_down());
+        assert!(mk(Some("Connecting"), None).wan_down());
+        assert!(mk(Some("Connected"), Some("Down")).wan_down());
+        assert!(mk(None, Some("Initializing")).wan_down());
+        assert!(mk(None, Some("Unavailable")).wan_down());
+    }
+
+    #[test]
     fn as_str_matches_serde_names() {
         use PathState::*;
         for p in [Ok, Degraded, LinkDown, NoIp, LanDown, IspDown, WanDown, DnsDown, PathState::Unknown] {
@@ -706,7 +802,7 @@ mod tests {
                 by_ap: Some(true),
                 timed_out: false,
             },
-            EventKind::HostAlert { alert: "undervoltage".into(), detail: "0x1".into() },
+            EventKind::HostAlert { alert: HostAlertKind::Undervoltage, detail: "0x1".into(), iface: None },
             EventKind::Security {
                 detector: "gateway_mac_change".into(),
                 severity: "high".into(),

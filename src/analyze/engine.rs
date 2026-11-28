@@ -3,6 +3,41 @@
 use super::*;
 use super::detect::*;
 
+// ---------- time windows (seconds) around an episode ----------
+
+/// Host alerts (driver reset, throttling, low memory) count from this long before the episode.
+const HOST_NEAR_BEFORE_S: i64 = 30;
+/// Host alerts count up to this long after the episode ends (a reset can lag the loss).
+const HOST_NEAR_AFTER_S: i64 = 15;
+/// An AP-initiated disconnect or timeout this close to an episode explains it.
+const AP_DISCONNECT_WINDOW_S: i64 = 15;
+/// Router (DOCSIS) log lines this close to an episode are shown and count as router evidence.
+const ROUTER_LOG_WINDOW_S: i64 = 120;
+/// A host suspend gap this close to an episode means the observer slept.
+const SUSPEND_WINDOW_S: i64 = 10;
+/// A clock jump this close to an episode makes timing unreliable.
+const CLOCK_JUMP_WINDOW_S: i64 = 5;
+/// A channel change shortly before the loss is a likely cause; a little after is tolerated.
+const CHANNEL_CHANGE_BEFORE_S: i64 = 15;
+const CHANNEL_CHANGE_AFTER_S: i64 = 5;
+/// A roam shortly before the loss is a likely cause; a little after is tolerated.
+const ROAM_BEFORE_S: i64 = 10;
+const ROAM_AFTER_S: i64 = 5;
+/// A carrier loss on the interface this close to the episode is its cause.
+const CARRIER_LOSS_WINDOW_S: i64 = 5;
+/// A router reboot this close to an episode explains it (router uptime is polled slowly).
+const ROUTER_REBOOT_WINDOW_S: i64 = 60;
+/// A router WAN-down sample this close to an episode explains it.
+const ROUTER_WAN_DOWN_WINDOW_S: i64 = 30;
+/// Signal and busy-channel medians use samples this far around an episode.
+const SIGNAL_WINDOW_S: i64 = 60;
+/// A speed test that started this long before the context window can still load the link.
+const SPEEDTEST_LEAD_S: i64 = 40;
+/// LAN device activity is compared over this window around an episode.
+const LAN_WINDOW_S: i64 = 600;
+/// Backfill an episode band from a Wi-Fi frequency reading at most this far from its middle.
+const BAND_BACKFILL_S: i64 = 120;
+
 // ---------- streaming state ----------
 
 #[derive(Default)]
@@ -96,6 +131,41 @@ pub(super) struct EpFlags {
     overrun_ticks: u32,
     bands: BTreeMap<String, u32>,
     hour_ticks: [u32; 24],
+}
+
+/// Close the open episode of one interface (if any) and reset its accumulator.
+fn close_episode(a: &mut IfAcc, iface: &str, tick: Duration, tick_s: f64) -> Option<(Episode, EpFlags)> {
+    let (Some(st), Some(lb)) = (a.open.start, a.open.last_bad) else { return None };
+    let end_base = lb.max(st);
+    let state = a.open.states.iter().max_by_key(|(_, c)| **c).and_then(|(k, _)| serde_json::from_value(serde_json::Value::String(k.clone())).ok()).unwrap_or(PathState::Unknown);
+    let bands = std::mem::take(&mut a.open.bands);
+    let dom_band = bands.iter().max_by_key(|(_, c)| **c).map(|(k, _)| k.clone());
+    let flags = EpFlags {
+        scan: a.open.scan,
+        speedtest: a.open.speedtest,
+        self_traffic: a.open.self_traffic,
+        overrun_ticks: a.open.overrun_ticks,
+        bands,
+        hour_ticks: a.open.hour_ticks,
+    };
+    let ep = Episode {
+        iface: iface.to_string(),
+        role: a.role.unwrap_or(IfaceRole::Other),
+        start: st,
+        end: end_base + tick,
+        duration_s: (end_base - st).num_milliseconds().max(0) as f64 / 1000.0 + tick_s,
+        ticks: a.open.ticks,
+        state,
+        cause: None,
+        origin: IncidentOrigin::Unknown,
+        band: dom_band,
+        speedtest_active: false,
+        context: texts(&open_context(&a.open)),
+        context_msg: open_context(&a.open),
+        finding: Default::default(),
+    };
+    a.open = OpenEp::default();
+    Some((ep, flags))
 }
 
 pub struct Analyzer {
@@ -362,39 +432,7 @@ impl Analyzer {
             }
         }
         // Episode tracking.
-        let close = |a: &mut IfAcc, iface: &str| -> Option<(Episode, EpFlags)> {
-            let (Some(st), Some(lb)) = (a.open.start, a.open.last_bad) else { return None };
-            let end_base = lb.max(st);
-            let state = a.open.states.iter().max_by_key(|(_, c)| **c).and_then(|(k, _)| serde_json::from_value(serde_json::Value::String(k.clone())).ok()).unwrap_or(PathState::Unknown);
-            let bands = std::mem::take(&mut a.open.bands);
-            let dom_band = bands.iter().max_by_key(|(_, c)| **c).map(|(k, _)| k.clone());
-            let flags = EpFlags {
-                scan: a.open.scan,
-                speedtest: a.open.speedtest,
-                self_traffic: a.open.self_traffic,
-                overrun_ticks: a.open.overrun_ticks,
-                bands,
-                hour_ticks: a.open.hour_ticks,
-            };
-            let ep = Episode {
-                iface: iface.to_string(),
-                role: a.role.unwrap_or(IfaceRole::Other),
-                start: st,
-                end: end_base + tick,
-                duration_s: (end_base - st).num_milliseconds().max(0) as f64 / 1000.0 + tick_s,
-                ticks: a.open.ticks,
-                state,
-                cause: None,
-                origin: IncidentOrigin::Unknown,
-                band: dom_band,
-                speedtest_active: false,
-                context: texts(&open_context(&a.open)),
-                context_msg: open_context(&a.open),
-                finding: Default::default(),
-            };
-            a.open = OpenEp::default();
-            Some((ep, flags))
-        };
+        let close = |a: &mut IfAcc, iface: &str| close_episode(a, iface, tick, tick_s);
         if bad {
             if let Some(lb) = a.open.last_bad
                 && (ts - lb).num_seconds() > gap
@@ -433,36 +471,8 @@ impl Analyzer {
             .fold(0.0, f64::max);
         // Close open episodes.
         for (n, a) in self.ifs.iter_mut() {
-            if let (Some(st), Some(lb)) = (a.open.start, a.open.last_bad) {
-                let end_base = lb.max(st);
-                let state = a.open.states.iter().max_by_key(|(_, c)| **c).and_then(|(k, _)| serde_json::from_value(serde_json::Value::String(k.clone())).ok()).unwrap_or(PathState::Unknown);
-                let bands = std::mem::take(&mut a.open.bands);
-                let dom_band = bands.iter().max_by_key(|(_, c)| **c).map(|(k, _)| k.clone());
-                let flags = EpFlags {
-                    scan: a.open.scan,
-                    speedtest: a.open.speedtest,
-                    self_traffic: a.open.self_traffic,
-                    overrun_ticks: a.open.overrun_ticks,
-                    bands,
-                    hour_ticks: a.open.hour_ticks,
-                };
-                self.episodes.push((Episode {
-                    iface: n.clone(),
-                    role: a.role.unwrap_or(IfaceRole::Other),
-                    start: st,
-                    end: end_base + tick,
-                    duration_s: (end_base - st).num_milliseconds().max(0) as f64 / 1000.0 + tick_s,
-                    ticks: a.open.ticks,
-                    state,
-                    cause: None,
-                    origin: IncidentOrigin::Unknown,
-                    band: dom_band,
-                    speedtest_active: false,
-                    context: texts(&open_context(&a.open)),
-                context_msg: open_context(&a.open),
-                finding: Default::default(),
-                }, flags));
-                a.open = OpenEp::default();
+            if let Some(ep) = close_episode(a, n, tick, tick_s) {
+                self.episodes.push(ep);
             }
         }
         // Backfill Wi-Fi episode band from Wifi stream if Samples lacked freq_mhz.
@@ -477,7 +487,7 @@ impl Analyzer {
                     .wifi_freqs
                     .iter()
                     .map(|(t, f)| ((*t - mid).num_seconds().abs(), *f))
-                    .filter(|(dt, _)| *dt <= 120)
+                    .filter(|(dt, _)| *dt <= BAND_BACKFILL_S)
                     .min_by_key(|(dt, _)| *dt);
                 if let Some((_, f)) = best {
                     // Do not add backfilled ticks to flags.bands: sample() never added them to a.bands[b].
@@ -505,8 +515,7 @@ impl Analyzer {
                     }
                     prev = Some(u);
                 }
-                let wan_down = r.wan_status.as_deref().is_some_and(|s| !s.eq_ignore_ascii_case("Connected"))
-                    || r.phy_status.as_deref().is_some_and(|s| !s.eq_ignore_ascii_case("Up"));
+                let wan_down = r.wan_down();
                 if wan_down {
                     router_wan_down.push(*t);
                 }
@@ -539,14 +548,14 @@ impl Analyzer {
             });
 
             // Observer vs network incident attribution (docs/INCIDENT-ATTRIBUTION.md).
-            let near = |t: &DateTime<Utc>| *t >= ep.start - Duration::seconds(30) && *t <= ep.end + Duration::seconds(15);
+            let near = |t: &DateTime<Utc>| *t >= ep.start - Duration::seconds(HOST_NEAR_BEFORE_S) && *t <= ep.end + Duration::seconds(HOST_NEAR_AFTER_S);
             let ap_disconnect = self.events.iter().any(|(t, ev)| {
                 matches!(ev, EventKind::WifiDisconnect { iface, by_ap, timed_out, .. } if *iface == ep.iface && (*by_ap == Some(true) || *timed_out))
-                    && *t >= ep.start - Duration::seconds(15)
-                    && *t <= ep.end + Duration::seconds(15)
+                    && *t >= ep.start - Duration::seconds(AP_DISCONNECT_WINDOW_S)
+                    && *t <= ep.end + Duration::seconds(AP_DISCONNECT_WINDOW_S)
             });
             let router_hit = router.iter().any(|r| {
-                r.ts >= ep.start - Duration::seconds(120) && r.ts <= ep.end + Duration::seconds(120)
+                r.ts >= ep.start - Duration::seconds(ROUTER_LOG_WINDOW_S) && r.ts <= ep.end + Duration::seconds(ROUTER_LOG_WINDOW_S)
             });
             let facts = attribution::IncidentFacts {
                 role: ep.role,
@@ -558,16 +567,16 @@ impl Analyzer {
                 self_traffic_ticks: flags.self_traffic,
                 overrun_ticks: flags.overrun_ticks,
                 suspend_near: self.events.iter().any(|(t, ev)| {
-                    matches!(ev, EventKind::SuspendGap { .. }) && *t >= ep.start - Duration::seconds(10) && *t <= ep.end + Duration::seconds(10)
+                    matches!(ev, EventKind::SuspendGap { .. }) && *t >= ep.start - Duration::seconds(SUSPEND_WINDOW_S) && *t <= ep.end + Duration::seconds(SUSPEND_WINDOW_S)
                 }),
                 driver_reset_offset_s: self
                     .events
                     .iter()
-                    .filter(|(t, ev)| near(t) && matches!(ev, EventKind::HostAlert { alert, detail } if alert == "driver_reset" && driver_reset_matches_iface(detail, &ep.iface)))
+                    .filter(|(t, ev)| near(t) && matches!(ev, EventKind::HostAlert { alert: HostAlertKind::DriverReset, detail, iface } if host_alert_iface(iface.as_deref(), detail) == Some(ep.iface.as_str())))
                     .map(|(t, _)| (*t - ep.start).num_milliseconds() as f64 / 1000.0)
                     .reduce(f64::min),
                 throttled_near: self.host_throttled_at.iter().any(near),
-                low_memory_near: self.events.iter().any(|(t, ev)| near(t) && matches!(ev, EventKind::HostAlert { alert, .. } if alert == "low_memory")),
+                low_memory_near: self.events.iter().any(|(t, ev)| near(t) && matches!(ev, EventKind::HostAlert { alert: HostAlertKind::LowMemory, .. })),
                 power_save_on: self.host_power_save_ifaces.contains(&ep.iface),
                 other_failed: others
                     .iter()
@@ -590,15 +599,15 @@ impl Analyzer {
                 self.events.iter().any(|(t, ev)| *t >= ep.start - Duration::seconds(s) && *t <= ep.end + Duration::seconds(e) && pred(ev))
             };
             let mut facts = facts;
-            facts.clock_jump_near = ev_near(5, 5, &|ev| matches!(ev, EventKind::ClockJump { .. }));
-            facts.channel_switch_near = ev_near(15, 5, &|ev| matches!(ev, EventKind::ChannelChange { iface, .. } if *iface == ep.iface));
-            facts.roam_near = ev_near(10, 5, &|ev| matches!(ev, EventKind::Roam { iface, .. } if *iface == ep.iface));
-            facts.carrier_loss_near = ev_near(5, 5, &|ev| matches!(ev, EventKind::LinkChange { iface, from, to } if *iface == ep.iface && from.carrier && !to.carrier));
-            facts.router_reboot_near = router_reboots.iter().any(|t| *t >= ep.start - Duration::seconds(60) && *t <= ep.end + Duration::seconds(60));
-            facts.router_wan_down_near = router_wan_down.iter().any(|t| *t >= ep.start - Duration::seconds(30) && *t <= ep.end + Duration::seconds(30));
+            facts.clock_jump_near = ev_near(CLOCK_JUMP_WINDOW_S, CLOCK_JUMP_WINDOW_S, &|ev| matches!(ev, EventKind::ClockJump { .. }));
+            facts.channel_switch_near = ev_near(CHANNEL_CHANGE_BEFORE_S, CHANNEL_CHANGE_AFTER_S, &|ev| matches!(ev, EventKind::ChannelChange { iface, .. } if *iface == ep.iface));
+            facts.roam_near = ev_near(ROAM_BEFORE_S, ROAM_AFTER_S, &|ev| matches!(ev, EventKind::Roam { iface, .. } if *iface == ep.iface));
+            facts.carrier_loss_near = ev_near(CARRIER_LOSS_WINDOW_S, CARRIER_LOSS_WINDOW_S, &|ev| matches!(ev, EventKind::LinkChange { iface, from, to } if *iface == ep.iface && from.carrier && !to.carrier));
+            facts.router_reboot_near = router_reboots.iter().any(|t| *t >= ep.start - Duration::seconds(ROUTER_REBOOT_WINDOW_S) && *t <= ep.end + Duration::seconds(ROUTER_REBOOT_WINDOW_S));
+            facts.router_wan_down_near = router_wan_down.iter().any(|t| *t >= ep.start - Duration::seconds(ROUTER_WAN_DOWN_WINDOW_S) && *t <= ep.end + Duration::seconds(ROUTER_WAN_DOWN_WINDOW_S));
             facts.no_ip = ep.state == PathState::NoIp;
             if let Some(a) = self.ifs.get(&ep.iface) {
-                let (w0, w1) = (ep.start - Duration::seconds(60), ep.end + Duration::seconds(60));
+                let (w0, w1) = (ep.start - Duration::seconds(SIGNAL_WINDOW_S), ep.end + Duration::seconds(SIGNAL_WINDOW_S));
                 facts.signal_dbm = med64(&mut a.signal.iter().filter(|(t, _)| *t >= w0 && *t <= w1).map(|(_, s)| f64::from(*s)).collect::<Vec<_>>());
                 facts.busy_pct = med64(&mut a.busy.iter().filter(|(t, _)| *t >= w0 && *t <= w1).map(|(_, b)| *b).collect::<Vec<_>>());
             }
@@ -652,7 +661,7 @@ impl Analyzer {
                         at = at, c1 = from.carrier, c2 = to.carrier, ip1 = from.ipv4.map_or("-".into(), |a| a.to_string()), ip2 = to.ipv4.map_or("-".into(), |a| a.to_string()))),
                     EventKind::SuspendGap { secs } => Some(crate::msg!("c_suspend", "{at} monitor host suspended {s}s", at = at, s = format!("{secs:.0}"))),
                     EventKind::ClockJump { wall_delta_s, .. } => Some(crate::msg!("c_clock", "{at} clock jump {s}s", at = at, s = format!("{wall_delta_s:.0}"))),
-                    EventKind::HostAlert { alert, detail } => Some(crate::msg!("c_host", "{at} host alert ({alert}): {detail}", at = at, alert = alert, detail = detail)),
+                    EventKind::HostAlert { alert, detail, .. } => Some(crate::msg!("c_host", "{at} host alert ({alert}): {detail}", at = at, alert = alert.as_str(), detail = detail)),
                     _ => None,
                 };
                 if let Some(m) = line {
@@ -676,7 +685,7 @@ impl Analyzer {
                     }
                 }
             }
-            if self.speedtests.iter().any(|(t, _)| *t >= w0 - Duration::seconds(40) && *t <= w1) {
+            if self.speedtests.iter().any(|(t, _)| *t >= w0 - Duration::seconds(SPEEDTEST_LEAD_S) && *t <= w1) {
                 ep.note(crate::msg!("c_speedtest", "speed test running nearby"));
             }
             if let Some(a) = self.ifs.get(&ep.iface) {
@@ -693,14 +702,14 @@ impl Analyzer {
                         ep.note(crate::msg!("c_busy", "channel busy {mx}% (usual {base}%)", mx = format!("{mx:.0}"), base = format!("{base:.0}")));
                     }
             }
-            for r in router.iter().filter(|r| r.ts >= w0 - Duration::seconds(120) && r.ts <= w1 + Duration::seconds(120)) {
+            for r in router.iter().filter(|r| r.ts >= w0 - Duration::seconds(ROUTER_LOG_WINDOW_S) && r.ts <= w1 + Duration::seconds(ROUTER_LOG_WINDOW_S)) {
                 ep.note(crate::msg!("c_router_log", "router log: {prio} {line}", prio = r.priority, line = r.text));
             }
             if let Some(base) = lan_med
                 && let Some((_, l)) = self
                     .lan_samples
                     .iter()
-                    .filter(|(t, _)| *t >= ep.start - Duration::seconds(600) && *t <= ep.end + Duration::seconds(600))
+                    .filter(|(t, _)| *t >= ep.start - Duration::seconds(LAN_WINDOW_S) && *t <= ep.end + Duration::seconds(LAN_WINDOW_S))
                     .max_by_key(|(_, l)| l.arp_alive)
                 && f64::from(l.arp_alive) >= (base + 5.0).max(base * 1.5)
             {
@@ -717,7 +726,7 @@ impl Analyzer {
 
         // Router log lines vs episodes.
         for r in router {
-            let hit = ep_with_flags.iter().map(|(e, _)| e).find(|e| r.ts >= e.start - Duration::seconds(120) && r.ts <= e.end + Duration::seconds(120));
+            let hit = ep_with_flags.iter().map(|(e, _)| e).find(|e| r.ts >= e.start - Duration::seconds(ROUTER_LOG_WINDOW_S) && r.ts <= e.end + Duration::seconds(ROUTER_LOG_WINDOW_S));
             rep.router_log_matches.push(format!(
                 "{} {} {} -> {}",
                 r.ts.with_timezone(&Local).format("%m-%d %H:%M:%S"),
@@ -980,9 +989,7 @@ impl Analyzer {
             let mut wan_rx_pps = Vec::new();
             let mut wan_tx_pps = Vec::new();
             for (_, rs) in &self.router_samples {
-                let down_wan = rs.wan_status.as_deref().is_some_and(|s| !s.eq_ignore_ascii_case("Connected"));
-                let down_phy = rs.phy_status.as_deref().is_some_and(|s| !s.eq_ignore_ascii_case("Up"));
-                if down_wan || down_phy {
+                if rs.wan_down() {
                     rr.wan_down_samples += 1;
                 }
                 if let Some(u) = rs.uptime_s {
