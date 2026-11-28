@@ -778,6 +778,7 @@ mod tests {
             speedtest_active: false,
             context: vec![],
             context_msg: vec![],
+            finding: Default::default(),
         }
     }
 

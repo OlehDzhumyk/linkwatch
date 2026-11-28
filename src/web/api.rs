@@ -1267,6 +1267,8 @@ pub(crate) struct ReportEpisode {
     pub speedtest_active: bool,
     /// Context lines (translatable; `text` is English).
     pub context: Vec<Msg>,
+    /// The detective's graded attribution with its evidence.
+    pub finding: crate::analyze::attribution::Finding,
 }
 
 #[derive(Serialize)]
@@ -1525,6 +1527,7 @@ fn analyze_session_dir(dir: &Path, id: String, live_verdict: Option<Verdict>) ->
             band: ep.band.clone(),
             speedtest_active: ep.speedtest_active,
             context: ep.context_msg.clone(),
+            finding: ep.finding.clone(),
         })
         .collect();
     // Ensure strict newest-first order when multiple interfaces had interleaved episodes.

@@ -200,6 +200,7 @@ fn periodic_pattern_found() {
             speedtest_active: false,
             context: vec![],
             context_msg: vec![],
+            finding: Default::default(),
         })
         .collect();
     let p = patterns(&eps, 2.5);

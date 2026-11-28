@@ -52,6 +52,7 @@ fn mk_ep(iface: &str, role: IfaceRole, start: DateTime<Utc>, secs: i64, state: P
         speedtest_active: speedtest,
         context: vec![],
         context_msg: vec![],
+        finding: Default::default(),
     }
 }
 

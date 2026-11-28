@@ -12,6 +12,7 @@
 //! Streaming over samples: memory is bounded by minutes and episodes, not by ticks.
 
 
+pub mod attribution;
 mod detect;
 mod engine;
 mod markdown;
@@ -113,6 +114,9 @@ pub struct Episode {
     /// `context` as translatable messages (same order).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub context_msg: Vec<Msg>,
+    /// The detective's graded attribution with its evidence (docs/INCIDENT-ATTRIBUTION.md).
+    #[serde(default)]
+    pub finding: attribution::Finding,
 }
 
 impl Episode {

@@ -14,9 +14,10 @@ pub(super) struct OpenEp {
     states: BTreeMap<String, u32>,
     bands: BTreeMap<String, u32>,
     hour_ticks: [u32; 24],
-    scan: bool,
-    speedtest: bool,
-    self_traffic: bool,
+    /// Bad ticks with that flag (dose for the attribution).
+    scan: u32,
+    speedtest: u32,
+    self_traffic: u32,
 }
 
 #[derive(Default)]
@@ -89,9 +90,9 @@ pub(super) struct IfAcc {
 
 #[derive(Clone, Default)]
 pub(super) struct EpFlags {
-    scan: bool,
-    speedtest: bool,
-    self_traffic: bool,
+    scan: u32,
+    speedtest: u32,
+    self_traffic: u32,
     overrun_ticks: u32,
     bands: BTreeMap<String, u32>,
     hour_ticks: [u32; 24],
@@ -389,6 +390,7 @@ impl Analyzer {
                 speedtest_active: false,
                 context: texts(&open_context(&a.open)),
                 context_msg: open_context(&a.open),
+                finding: Default::default(),
             };
             a.open = OpenEp::default();
             Some((ep, flags))
@@ -404,9 +406,9 @@ impl Analyzer {
                 a.open.last_bad = Some(ts);
                 a.open.ticks += 1;
                 a.open.overrun_ticks += u32::from(s.overrun);
-                a.open.scan |= s.scan_active;
-                a.open.speedtest |= s.speedtest_active;
-                a.open.self_traffic |= self_traffic;
+                a.open.scan += u32::from(s.scan_active);
+                a.open.speedtest += u32::from(s.speedtest_active);
+                a.open.self_traffic += u32::from(self_traffic);
                 a.open.hour_ticks[h] += 1;
                 if let Some(bname) = band {
                     *a.open.bands.entry(bname).or_default() += 1;
@@ -458,6 +460,7 @@ impl Analyzer {
                     speedtest_active: false,
                     context: texts(&open_context(&a.open)),
                 context_msg: open_context(&a.open),
+                finding: Default::default(),
                 }, flags));
                 a.open = OpenEp::default();
             }
@@ -487,14 +490,36 @@ impl Analyzer {
         // Cross-path cause: for each episode, what were the other interfaces doing?
         // Another path counts as failing too only when its outage covers a real part
         // (at least half, or 3 ticks) of this one; a 1-tick blip there must not flip the cause.
-        let eps: Vec<Episode> = self.episodes.iter().map(|(e, _)| e.clone()).collect();
+        let eps: Vec<(Episode, bool)> = self.episodes.iter().map(|(e, f)| (e.clone(), f.self_traffic > 0)).collect();
+        // Router telemetry for the detective: reboots (uptime went back) and WAN-down samples.
+        let mut router_reboots = Vec::new();
+        let mut router_wan_down = Vec::new();
+        {
+            let mut rs: Vec<&(DateTime<Utc>, RouterSample)> = self.router_samples.iter().collect();
+            rs.sort_by_key(|(t, _)| *t);
+            let mut prev: Option<u64> = None;
+            for (t, r) in rs {
+                if let Some(u) = r.uptime_s {
+                    if prev.is_some_and(|p| u + 30 < p) {
+                        router_reboots.push(*t - Duration::seconds(u as i64));
+                    }
+                    prev = Some(u);
+                }
+                let wan_down = r.wan_status.as_deref().is_some_and(|s| !s.eq_ignore_ascii_case("Connected"))
+                    || r.phy_status.as_deref().is_some_and(|s| !s.eq_ignore_ascii_case("Up"));
+                if wan_down {
+                    router_wan_down.push(*t);
+                }
+            }
+        }
         let isp_known = self.isp_seen;
         for (ep, flags) in self.episodes.iter_mut() {
             let need = (ep.duration_s / 2.0).min(3.0 * tick_s).max(tick_s * 0.99);
-            let others: Vec<&Episode> = eps
+            let others: Vec<(&Episode, bool)> = eps
                 .iter()
-                .filter(|o| o.iface != ep.iface && o.start < ep.end && ep.start < o.end)
-                .filter(|o| (o.end.min(ep.end) - o.start.max(ep.start)).num_milliseconds() as f64 / 1000.0 >= need)
+                .map(|(o, st)| (o, *st))
+                .filter(|(o, _)| o.iface != ep.iface && o.start < ep.end && ep.start < o.end)
+                .filter(|(o, _)| (o.end.min(ep.end) - o.start.max(ep.start)).num_milliseconds() as f64 / 1000.0 >= need)
                 .collect();
             // Other paths that were connected during this episode (with link, so comparable).
             let comparable = self
@@ -508,12 +533,13 @@ impl Analyzer {
             } else if others.is_empty() {
                 if ep.role == IfaceRole::Wifi { Verdict::WifiProblem } else { Verdict::WiredProblem }
             } else {
-                let mut st: Vec<(IfaceRole, PathState)> = others.iter().map(|o| (o.role, o.state)).collect();
+                let mut st: Vec<(IfaceRole, PathState)> = others.iter().map(|(o, _)| (o.role, o.state)).collect();
                 st.push((ep.role, ep.state));
                 crate::classify::verdict(&st, isp_known)
             });
 
-            // Observer vs network incident attribution.
+            // Observer vs network incident attribution (docs/INCIDENT-ATTRIBUTION.md).
+            let near = |t: &DateTime<Utc>| *t >= ep.start - Duration::seconds(30) && *t <= ep.end + Duration::seconds(15);
             let ap_disconnect = self.events.iter().any(|(t, ev)| {
                 matches!(ev, EventKind::WifiDisconnect { iface, by_ap, timed_out, .. } if *iface == ep.iface && (*by_ap == Some(true) || *timed_out))
                     && *t >= ep.start - Duration::seconds(15)
@@ -522,53 +548,66 @@ impl Analyzer {
             let router_hit = router.iter().any(|r| {
                 r.ts >= ep.start - Duration::seconds(120) && r.ts <= ep.end + Duration::seconds(120)
             });
-            let corroborated = !others.is_empty() || router_hit;
-
-            ep.speedtest_active = flags.speedtest;
-            let scan_obs = flags.scan && ep.role == IfaceRole::Wifi && !corroborated && ep.duration_s <= 12.0;
-            // Our own speed test saturates the link; a short failure that overlaps it and that no
-            // other path or the router log confirms is the observer's doing.
-            let speedtest_obs = flags.speedtest && !corroborated && ep.duration_s <= 30.0;
-            // The same for the host's own heavy traffic (updates, backups, downloads).
-            let self_traffic_obs = flags.self_traffic && !corroborated && ep.duration_s <= 30.0;
-            let overrun_obs = !router_hit && ep.ticks > 0 && flags.overrun_ticks * 2 >= ep.ticks;
-            let near_suspend = self.events.iter().any(|(t, ev)| {
-                matches!(ev, EventKind::SuspendGap { .. })
-                    && *t >= ep.start - Duration::seconds(10)
-                    && *t <= ep.end + Duration::seconds(10)
-            });
-            let near_undervolt_or_oom = !router_hit
-                && self.events.iter().any(|(t, ev)| {
-                    matches!(ev, EventKind::HostAlert { alert, .. } if matches!(alert.as_str(), "undervoltage" | "low_memory"))
-                        && *t >= ep.start - Duration::seconds(30)
-                        && *t <= ep.end + Duration::seconds(15)
-                });
-            let near_driver_reset = !corroborated
-                && self.events.iter().any(|(t, ev)| {
-                    matches!(ev, EventKind::HostAlert { alert, detail } if alert == "driver_reset" && driver_reset_matches_iface(detail, &ep.iface))
-                        && *t >= ep.start - Duration::seconds(30)
-                        && *t <= ep.end + Duration::seconds(15)
-                });
-            let near_thermal_or_throttle = !corroborated
-                && (self.events.iter().any(|(t, ev)| {
-                    matches!(ev, EventKind::HostAlert { alert, .. } if alert == "thermal_throttle")
-                        && *t >= ep.start - Duration::seconds(30)
-                        && *t <= ep.end + Duration::seconds(15)
-                }) || self.host_throttled_at.iter().any(|t| {
-                    *t >= ep.start - Duration::seconds(30) && *t <= ep.end + Duration::seconds(15)
-                }));
-            let is_observer = scan_obs
-                || speedtest_obs
-                || self_traffic_obs
-                || overrun_obs
-                || near_suspend
-                || near_undervolt_or_oom
-                || near_driver_reset
-                || near_thermal_or_throttle;
-
-            ep.origin = if is_observer {
+            let facts = attribution::IncidentFacts {
+                role: ep.role,
+                duration_s: ep.duration_s,
+                ticks: ep.ticks,
+                tick_s,
+                scan_ticks: flags.scan,
+                speedtest_ticks: flags.speedtest,
+                self_traffic_ticks: flags.self_traffic,
+                overrun_ticks: flags.overrun_ticks,
+                suspend_near: self.events.iter().any(|(t, ev)| {
+                    matches!(ev, EventKind::SuspendGap { .. }) && *t >= ep.start - Duration::seconds(10) && *t <= ep.end + Duration::seconds(10)
+                }),
+                driver_reset_offset_s: self
+                    .events
+                    .iter()
+                    .filter(|(t, ev)| near(t) && matches!(ev, EventKind::HostAlert { alert, detail } if alert == "driver_reset" && driver_reset_matches_iface(detail, &ep.iface)))
+                    .map(|(t, _)| (*t - ep.start).num_milliseconds() as f64 / 1000.0)
+                    .reduce(f64::min),
+                throttled_near: self.host_throttled_at.iter().any(near),
+                low_memory_near: self.events.iter().any(|(t, ev)| near(t) && matches!(ev, EventKind::HostAlert { alert, .. } if alert == "low_memory")),
+                power_save_on: self.host_power_save_ifaces.contains(&ep.iface),
+                other_failed: others
+                    .iter()
+                    .map(|(o, self_traffic)| attribution::OtherFailure { iface: o.iface.clone(), role: o.role, self_traffic: *self_traffic })
+                    .collect(),
+                comparable_paths: comparable as u32,
+                router_hit,
+                ap_disconnect,
+                clock_jump_near: false,
+                router_reboot_near: false,
+                router_wan_down_near: false,
+                channel_switch_near: false,
+                roam_near: false,
+                carrier_loss_near: false,
+                no_ip: false,
+                signal_dbm: None,
+                busy_pct: None,
+            };
+            let ev_near = |s: i64, e: i64, pred: &dyn Fn(&EventKind) -> bool| {
+                self.events.iter().any(|(t, ev)| *t >= ep.start - Duration::seconds(s) && *t <= ep.end + Duration::seconds(e) && pred(ev))
+            };
+            let mut facts = facts;
+            facts.clock_jump_near = ev_near(5, 5, &|ev| matches!(ev, EventKind::ClockJump { .. }));
+            facts.channel_switch_near = ev_near(15, 5, &|ev| matches!(ev, EventKind::ChannelChange { iface, .. } if *iface == ep.iface));
+            facts.roam_near = ev_near(10, 5, &|ev| matches!(ev, EventKind::Roam { iface, .. } if *iface == ep.iface));
+            facts.carrier_loss_near = ev_near(5, 5, &|ev| matches!(ev, EventKind::LinkChange { iface, from, to } if *iface == ep.iface && from.carrier && !to.carrier));
+            facts.router_reboot_near = router_reboots.iter().any(|t| *t >= ep.start - Duration::seconds(60) && *t <= ep.end + Duration::seconds(60));
+            facts.router_wan_down_near = router_wan_down.iter().any(|t| *t >= ep.start - Duration::seconds(30) && *t <= ep.end + Duration::seconds(30));
+            facts.no_ip = ep.state == PathState::NoIp;
+            if let Some(a) = self.ifs.get(&ep.iface) {
+                let (w0, w1) = (ep.start - Duration::seconds(60), ep.end + Duration::seconds(60));
+                facts.signal_dbm = med64(&mut a.signal.iter().filter(|(t, _)| *t >= w0 && *t <= w1).map(|(_, s)| f64::from(*s)).collect::<Vec<_>>());
+                facts.busy_pct = med64(&mut a.busy.iter().filter(|(t, _)| *t >= w0 && *t <= w1).map(|(_, b)| *b).collect::<Vec<_>>());
+            }
+            let finding = attribution::attribute(&facts);
+            ep.speedtest_active = flags.speedtest > 0;
+            ep.origin = if finding.attribution.is_observer() {
                 IncidentOrigin::Observer
-            } else if !matches!(ep.cause, None | Some(Verdict::SinglePath | Verdict::Unknown))
+            } else if finding.attribution != attribution::Attribution::Network
+                || !matches!(ep.cause, None | Some(Verdict::SinglePath | Verdict::Unknown))
                 || ap_disconnect
                 || router_hit
                 || self.host_samples > 0
@@ -577,6 +616,7 @@ impl Analyzer {
             } else {
                 IncidentOrigin::Unknown
             };
+            ep.finding = finding;
         }
 
         // Context around episodes.
@@ -625,7 +665,7 @@ impl Analyzer {
                         && oa.role == Some(IfaceRole::Wifi)
                         && oa.ticks > 0
                         && !oa.no_link.iter().any(|(s, e)| *s < ep.end && ep.start < *e)
-                        && !eps.iter().any(|o| o.iface == *other_if && o.start < ep.end && ep.start < o.end)
+                        && !eps.iter().any(|(o, _)| o.iface == *other_if && o.start < ep.end && ep.start < o.end)
                     {
                         let b = if oa.bands.is_empty() {
                             "unknown band".to_string()
@@ -1017,10 +1057,10 @@ impl Analyzer {
 
 pub(super) fn open_context(o: &OpenEp) -> Vec<Msg> {
     let mut v = vec![];
-    if o.scan {
+    if o.scan > 0 {
         v.push(crate::msg!("c_own_scan", "monitor's own Wi-Fi scan was running (off-channel)"));
     }
-    if o.speedtest {
+    if o.speedtest > 0 {
         v.push(crate::msg!("c_own_speed", "monitor's own speed test was running"));
     }
     v

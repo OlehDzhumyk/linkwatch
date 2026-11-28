@@ -1,0 +1,243 @@
+# Incident Attribution ("Detective")
+
+> Status: design for `src/analyze/attribution.rs` (replaces the boolean block in
+> `Analyzer::finish`). Audience: maintainers and agents that change the analyzer.
+
+## 1. Problem
+
+Today every outage episode gets `origin = Observer` when **any** host flag is near it (scan,
+speed test, own traffic, late ticks, suspend, throttling, low memory, driver reset), with a few
+"unless another path or the router log confirms it" exceptions. That is:
+
+- **too lenient** when a small host effect hides a real network fault: one late tick in a 40 s
+  outage makes the whole outage "the observer's fault" and removes it from the network totals;
+- **too aggressive** when a host effect could not have caused the symptom at all: a Wi-Fi scan
+  next to an Ethernet-only outage, or a driver reset that came 20 s *after* the outage began;
+- **opaque**: the report does not say *why* an incident was excluded, or what would change it.
+
+Two alerts the old code waits for (`thermal_throttle`, `undervoltage`) are never emitted by
+`host.rs`; throttling arrives only as `HostSample.throttled`. The new module uses the samples.
+
+## 2. Principle
+
+A host problem explains an incident only when it is **able** to produce this symptom on this
+path (capability), is **strong enough** for this duration (dose), came **first** (timing), and
+nothing independent **contradicts** it (counter-evidence). Each incident gets an explicit
+evidence list and a graded result, never a silent exclusion.
+
+## 3. Inputs per incident (`IncidentFacts`)
+
+Built by the engine from data that every session already records. No new measurements.
+
+| Field | Source |
+|---|---|
+| `iface`, `role`, `duration_s`, `ticks` (bad ticks), `tick_s` | episode |
+| `scan_ticks`, `speedtest_ticks`, `self_traffic_ticks`, `overrun_ticks` | bad ticks of the episode with that `Sample` flag (own traffic includes the merge gap before) |
+| `suspend_near` | `SuspendGap` event in `[start − 10 s, end + 10 s]` |
+| `driver_reset_offset_s` | first `HostAlert driver_reset` for this iface in `[start − 30 s, end + 15 s]`, seconds from `start` (negative = before) |
+| `throttled_near`, `low_memory_near` | `HostSample.throttled` / `HostAlert low_memory` in `[start − 30 s, end + 15 s]` |
+| `power_save_on` | Wi-Fi power-save was on for this iface during the session |
+| `other_failed` | other interfaces whose outage covers at least half (or 3 ticks) of this one, with their role and the host flags they had |
+| `comparable_paths` | other interfaces that had link during the episode |
+| `router_hit` | imported router (DOCSIS) log line within ±120 s |
+| `ap_disconnect` | `WifiDisconnect` by the AP or by timeout within ±15 s (Wi-Fi only) |
+| `host_samples` | the session has host samples at all |
+
+## 4. Suspects: what each host effect can explain
+
+`scope` = which paths it can break. `max` = the longest stretch of an outage it can explain.
+`strength` = how sure we are when it fully covers the outage.
+
+| Suspect | Scope | Explains (seconds) | Strength | Notes |
+|---|---|---|---|---|
+| `scan` (own off-channel scan) | this Wi-Fi iface only | `scan_ticks·tick + 2 s`, max 12 s | strong | cannot touch Ethernet |
+| `speed_test` (own) | all paths (shares the WAN) | `speedtest_ticks·tick + 5 s`, max 30 s | strong | a provocation, not a fault: with other paths failing too it is a **load incident** (network weakness under load) |
+| `self_traffic` (host's own load) | this iface only | `self_traffic_ticks·tick + 5 s`, max 30 s | strong | other path without own traffic failing = counter-evidence |
+| `overrun` (late ticks) | all paths | `overrun_ticks·tick` | strong if ≥ 50 % of ticks, else weak | each late tick explains one tick, no more |
+| `suspend` | all paths | whole outage | confirmed | the host was not running |
+| `driver_reset` | this iface only | whole outage, **only if** offset ≤ +5 s | strong | later than +5 s = a consequence, not the cause (noted) |
+| `throttling` | all paths | max 15 s | weak | throttling causes late ticks; alone it is a hint |
+| `low_memory` | all paths | max 15 s | weak | |
+| `power_save` | this Wi-Fi iface only | whole outage **only if** ≤ 2 ticks | weak | power-save adds latency and 1–2 missed beacons, not long full loss |
+| `clock_jump` | all paths | max 5 s | strong | the wall clock was stepped (`ClockJump`); tick timing around it is not trustworthy |
+
+`host_explained_s` = the largest explained value of the suspects that apply (capped at the
+duration). Ratio `r = host_explained_s / duration_s`.
+
+## 5. Counter-evidence (independent of the host)
+
+A counter-evidence item applies to a suspect only when the suspect **could not** have caused
+it:
+
+- **Other path failed** (`other_failed` non-empty) — counts against suspects with scope "this
+  iface only" (`scan`, `self_traffic` when the other path had no own traffic, `driver_reset`,
+  `power_save`), against every **weak** suspect (`throttling`, `low_memory`, weak `overrun`: a
+  hint does not outweigh an independent path), and against `speed_test` (→ load incident). It
+  does **not** count against strong all-path suspects (`suspend`, strong `overrun`): those break
+  every path at once.
+- **Router log line** (`router_hit`) — counts against every suspect.
+- **AP disconnect** (`ap_disconnect`, the AP sent deauth or the association timed out) —
+  counts against `scan`, `power_save`, `self_traffic`.
+
+## 5a. Network causes (hints)
+
+When the network is (partly) at fault, the detective also names the most likely network
+element. Several can apply; the list is ordered strongest first. The ones marked *independent*
+are counter-evidence like the router log (section 5).
+
+| Cause | Signal | Independent | Counts against |
+|---|---|---|---|
+| `router_log` | imported DOCSIS log line ±120 s | yes | every suspect |
+| `router_reboot` | router uptime went back (UPnP/SNMP), boot time ±60 s | yes | every suspect |
+| `router_wan_down` | router reports WAN/PHY down ±30 s | yes | every suspect |
+| `ap_disconnect` | AP deauth or association timeout ±15 s | yes | `scan`, `power_save`, `self_traffic` |
+| `channel_switch` | `ChannelChange` on this iface (−15 s … +5 s) | yes | `scan`, `power_save`, `self_traffic` |
+| `carrier_loss` | `LinkChange` carrier 1 → 0 on this wired iface ±5 s | yes | iface-only and weak suspects |
+| `roam` | `Roam` on this iface (−10 s … +5 s) | no (the client decides; H22) | — |
+| `dhcp` | episode state `no_ip` | no | — |
+| `weak_signal` | median signal ≤ −75 dBm ±60 s | no | — |
+| `busy_channel` | median channel busy ≥ 70 % ±60 s | no | — |
+
+Observer results carry no network causes.
+
+## 6. Result
+
+```text
+Attribution = network | network_despite_host | mixed | observer_likely | observer_confirmed
+Confidence  = high | medium | low          (for network results)
+```
+
+Decision, in this order:
+
+1. No suspect applies → `network`.
+2. Strongest applicable suspect `S` (confirmed > strong > weak), ratio `r`, counter `C`
+   (any counter-evidence that applies to `S`).
+3. With `C`:
+   - `S` is `speed_test` → `mixed` (the existing *load incident*: counted as network, flagged
+     as load-provoked).
+   - `S` strong or confirmed and `r ≥ 0.1` → `mixed`.
+   - otherwise → `network_despite_host`.
+4. Without `C`:
+   - `r ≥ 0.8`: `observer_confirmed` when `S` is confirmed or strong, `observer_likely` when weak.
+   - `0.1 ≤ r < 0.8` → `mixed`.
+   - `r < 0.1` → `network_despite_host`.
+
+`mixed` reports `host_explained_s` and `network_s = duration − host_explained_s`.
+
+Confidence of `network`, `network_despite_host` and `mixed`:
+- `high`: another path failed, a router log line, or an AP disconnect.
+- `medium`: another path was comparable (had link) and stayed fine.
+- `low`: single path, nothing independent.
+
+### Mapping to the existing fields (backward compatible)
+
+| Attribution | `Episode.origin` | Counted in |
+|---|---|---|
+| `observer_confirmed`, `observer_likely` | `observer` | observer incidents |
+| `mixed`, `network_despite_host`, `network` | `network` (or `unknown` when `network` with `low` confidence and no host samples, as before) | network incidents (load incidents when `speed_test`) |
+
+### Explanations
+
+Every result carries translatable messages (`Msg`):
+- `evidence`: one line per suspect and per counter-evidence (`a_scan`, `a_overrun`,
+  `a_driver_reset_after`, `a_other_path`, `a_router_log`, ...), with the seconds it explains;
+- `flip`: what would change the result (for example "if the Ethernet path had failed at the
+  same time, this would be a network fault"), so a reader can check it.
+
+## 7. Scenarios (tests)
+
+`t` = tick (1 s). "Wi-Fi out 4 s" = 4 bad ticks. Ethernet "ok" = comparable path that stayed
+fine. Each row is a unit test on `attribute()`; rows marked **E2E** are also tested through
+`Analyzer` with samples and events.
+
+| # | Situation | Expected | Why |
+|---|---|---|---|
+| A1 | Wi-Fi out 4 s, scan on 3 of 4 ticks, Ethernet ok | `observer_confirmed` | scan explains 5 s ≥ 4 s; scan cannot be contradicted by a healthy cable |
+| A2 | Wi-Fi out 40 s, scan on 3 ticks, Ethernet ok | `mixed`, host 5 s, network 35 s | scan explains 5 s (r = 0.125) |
+| A3 | Ethernet out 10 s, Wi-Fi scan at the same time, Wi-Fi ok | `network` | a Wi-Fi scan cannot break the cable (scope) |
+| A4 | Both paths out 20 s, `SuspendGap` inside | `observer_confirmed` on both | all-path suspect; the other path failing is not counter-evidence |
+| A5 | Wi-Fi out 20 s, throttling near, router log line | `network_despite_host`, confidence high | weak suspect + router log |
+| A6 | Wi-Fi out 30 s, 2 of 30 ticks late, Ethernet ok | `network_despite_host` | late ticks explain 2 s (r < 0.1) |
+| A7 | Wi-Fi out 30 s, 25 of 30 ticks late | `observer_confirmed` | strong overrun, r ≥ 0.8 |
+| A8 | Wi-Fi out 10 s with own heavy traffic on Wi-Fi, Ethernet ok | `observer_confirmed` | own load on that path only |
+| A9 | Wi-Fi out 10 s with own traffic on Wi-Fi, Ethernet (no own traffic) also out | `mixed`, high | the clean path failed too |
+| A10 | Wi-Fi out 40 s, driver reset at +20 s | `network`; note "driver reset came after the outage began" | timing: consequence, not cause |
+| A11 | Wi-Fi out 40 s, driver reset at −2 s, Ethernet ok | `observer_confirmed` | reset first, iface-scoped |
+| A12 | Wi-Fi out 15 s, power-save on, Ethernet ok | `network_despite_host`, medium | power-save cannot cause 15 s of full loss |
+| A13 | Wi-Fi out 2 s, power-save on, Ethernet ok | `observer_likely` | 1–2 missed beacons; weak |
+| A14 | Wi-Fi out 8 s, own speed test on 7 ticks, Ethernet ok | `observer_confirmed` (**E2E**, existing test) | short, uncorroborated |
+| A15 | Both out 6 s during own speed test | `mixed` → load incident, origin `network` (**E2E**, existing test) | the WAN gives up under load |
+| A16 | Wi-Fi out 30 s, nothing on the host, single path | `network`, confidence low | nothing contradicts, nothing confirms |
+| A17 | Wi-Fi out 12 s, scan on 3 ticks, AP sent deauth | `mixed`, high, host 5 s | the AP acted; a long off-channel scan can still have provoked it |
+| A18 | Wi-Fi out 20 s, low memory near, Ethernet ok | `mixed`, host 15 s, network 5 s | weak suspects explain at most 15 s and never confirm |
+| A19 | Wi-Fi out 4 s, throttling near, Ethernet ok | `observer_likely` | a weak suspect covers it all, nothing contradicts |
+| A20 | Both paths out 6 s (gateway answers, internet does not), throttling near | `network_despite_host`, high (**E2E**, existing test) | a weak hint does not outweigh two failing paths |
+| A21 | Both paths `lan_down` 90 s, router uptime reset inside | `network`, high, cause `router_reboot` | the router itself restarted |
+| A22 | Wi-Fi out 6 s, `ChannelChange` 5180 → 5500 at +1 s, Ethernet ok | `network`, high, cause `channel_switch` | DFS / AP channel move |
+| A23 | Wi-Fi out 3 s, `Roam` at the start, Ethernet ok | `network`, medium, cause `roam` | roaming gap; the client chose it, so it is only a hint |
+| A24 | Wi-Fi out 3 s, `Roam` and own scan on 2 ticks, Ethernet ok | `observer_confirmed` | the scan explains 4 s; a roam does not contradict it |
+| A25 | Wi-Fi out 20 s, signal −82 dBm, Ethernet ok | `network`, medium, cause `weak_signal` | |
+| A26 | Wi-Fi out 10 s, channel 85 % busy, Ethernet ok | `network`, medium, cause `busy_channel` | |
+| A27 | Wi-Fi `no_ip` 30 s, Ethernet ok | `network`, medium, cause `dhcp` | |
+| A28 | Both paths out 4 s, `ClockJump` inside | `observer_confirmed` | the clock step explains 5 s |
+| A29 | Both paths out 60 s, `ClockJump` inside | `network_despite_host` | a clock step explains 5 s of 60 (r < 0.1) |
+| A30 | Wi-Fi out 8 s, own scan on 3 ticks, `ChannelChange` at the same time | `mixed`, high, host 5 s, cause `channel_switch` | the AP moved channel; the scan explains only part |
+| A31 | Ethernet out 5 s, carrier lost, Wi-Fi ok | `network`, high, cause `carrier_loss` | cable, port or NIC |
+| A32 | Wi-Fi out 30 s, 15 of 30 ticks late, router log line | `mixed`, high, host 15 s | strong overrun, but the router also logged an event |
+| A33 | Both paths out 10 s, own heavy traffic on both | `observer_confirmed` on both | the other path had own traffic too, so it is not independent |
+| A34 | Wi-Fi out 3 s, power-save on, `ChannelChange` | `network_despite_host`, high, cause `channel_switch` | weak suspect contradicted by the AP |
+
+Clock trust (an unsynchronized clock when two observers are compared) belongs to `compare`,
+not to the per-incident result: `compare` already refuses to match events when clocks are not
+trusted.
+
+## 8. Not in scope
+
+- New measurements or sensors.
+- Probabilities or machine learning: the rules stay deterministic and every number is shown.
+- Changing the per-tick classifier (`classify.rs`) or the live verdict.
+
+## 9. The 30 most common real causes and coverage
+
+How often home users meet each cause is an estimate from support practice, not a measured
+statistic. "Covered" = the detective names it today; "partial" = visible in the report but not
+as a named cause; "no" = not detected.
+
+| # | Cause | Side | Covered |
+|---|---|---|---|
+| 1 | Weak signal (distance, walls, floors) | Wi-Fi | yes (`weak_signal`) |
+| 2 | Busy / overlapping channel (neighbours, co-channel) | Wi-Fi | yes (`busy_channel`) |
+| 3 | Roaming gap between APs or mesh nodes | Wi-Fi | yes (`roam`) |
+| 4 | AP deauth: band steering, load balancing, inactivity | Wi-Fi | yes (`ap_disconnect`) |
+| 5 | DFS radar channel switch on 5 GHz | Wi-Fi | yes (`channel_switch`) |
+| 6 | Router reboot / firmware crash | router | yes (`router_reboot`, needs `[router]`) |
+| 7 | Router WAN / modem sync loss (DOCSIS T3/T4, DSL resync) | line | yes (`router_wan_down`, `router_log`) |
+| 8 | ISP outage or maintenance | ISP | partial (cause `line_problem` / `internet_problem`) |
+| 9 | DHCP lease failure | router | yes (`dhcp`) |
+| 10 | Bufferbloat under load | line | yes (load incidents, loaded RTT) |
+| 11 | Evening congestion | ISP | partial (peak/off-peak RTT, hourly profile) |
+| 12 | ISP DNS outage | ISP | partial (cause `dns`) |
+| 13 | Problems beyond the ISP (peering, a target down) | internet | partial (cause `internet_problem`) |
+| 14 | Bad patch cable / port / NIC | local | yes (`carrier_loss`; `check` CRC/duplex) |
+| 15 | Router overheating or CPU overload | router | no (needs router CPU/temperature telemetry) |
+| 16 | Router NAT / conntrack table full | router | no |
+| 17 | PPPoE session reconnect | line | partial (`router_wan_down` when the router reports it) |
+| 18 | Mesh backhaul drop | Wi-Fi | partial (all clients of a node fail: visible with a second observer) |
+| 19 | Powerline / MoCA adapter drop | local | partial (`carrier_loss` does not fire: the link stays up) |
+| 20 | Rogue DHCP / IP conflict | LAN | partial (security events) |
+| 21 | Client power-save | host | yes (`power_save`) |
+| 22 | Own off-channel scan | host | yes (`scan`) |
+| 23 | Own downloads, updates, backups | host | yes (`self_traffic`) |
+| 24 | Own speed test | host | yes (`speed_test`, load incidents) |
+| 25 | Host sleep / suspend | host | yes (`suspend`) |
+| 26 | Driver / firmware reset, USB autosuspend | host | yes (`driver_reset`; `check` USB power) |
+| 27 | Host CPU / disk stalls | host | yes (`overrun`; `check --deep` PSI) |
+| 28 | Throttling / undervoltage / low memory | host | yes (`throttling`, `low_memory`) |
+| 29 | Clock step | host | yes (`clock_jump`) |
+| 30 | VPN carrying the probes | host | partial (`check` warns; not per incident) |
+
+How many scenarios are enough: every suspect needs at least one case for each way it can go —
+it covers the outage, it covers a part, it is out of scope, it comes too late, and it is
+contradicted — and every named network cause needs one case. That is about 40 cases; A1–A34
+plus the existing end-to-end tests cover the matrix except "too late" for suspects other than
+the driver reset (they have no start time yet).
