@@ -84,7 +84,7 @@ jobs:
             chmod 0755 "$pkg/linkwatch"
             cp README.md LICENSE.md CHANGELOG.md "$pkg/"
             cp examples/linkwatch.toml examples/site.toml "$pkg/examples/"
-            cp docs/FEATURES.md docs/I18N.md "$pkg/docs/"
+            cp docs/INSTALL.md docs/FEATURES.md docs/I18N.md "$pkg/docs/"
             cp -r deploy "$pkg/deploy"
             tar -C "$stage" -czf "dist-release/linkwatch_${ver}_linux_${arch}.tar.gz" "linkwatch_${ver}_linux_${arch}"
             rm -rf "$stage"

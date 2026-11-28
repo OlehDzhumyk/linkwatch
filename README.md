@@ -92,6 +92,13 @@ npm run check     # strict TypeScript typecheck
 npm run build     # emits ES modules to src/web/ui/dist/ (committed)
 ```
 
+Run the same checks as CI (clippy, tests, bindings, UI) on a Linux host or in Docker:
+
+```sh
+scripts/ci.sh             # needs Rust with clippy and Node
+scripts/ci.sh --docker    # IMAGE=<image with Rust + Node>
+```
+
 For manual service install (without `.deb`):
 
 ```sh

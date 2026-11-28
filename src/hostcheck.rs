@@ -79,23 +79,23 @@ fn wired_phy(base: &Path, iface: &str) -> Vec<Item> {
     let mut out = Vec::new();
     let speed = read_trim(&base.join("speed")).and_then(|s| s.parse::<i64>().ok());
     let duplex = read_trim(&base.join("duplex"));
-    if let (Some(speed), Some(duplex)) = (speed, duplex.as_deref()) {
-        if speed > 0 {
-            let half = duplex != "full";
-            let slow = speed < 1000;
-            out.push(item(
-                if half { Level::Fail } else if slow { Level::Warn } else { Level::Ok },
-                format!("cable {iface}"),
-                format!("{speed} Mbit/s, {duplex} duplex"),
-                if half {
-                    Some("half duplex means a bad cable or port; replace the patch cable or try another router port")
-                } else if slow {
-                    Some("100 Mbit/s on a gigabit NIC usually means a damaged cable pair; ignore if the router port is 100 Mbit/s")
-                } else {
-                    None
-                },
-            ));
-        }
+    if let (Some(speed), Some(duplex)) = (speed, duplex.as_deref())
+        && speed > 0
+    {
+        let half = duplex != "full";
+        let slow = speed < 1000;
+        out.push(item(
+            if half { Level::Fail } else if slow { Level::Warn } else { Level::Ok },
+            format!("cable {iface}"),
+            format!("{speed} Mbit/s, {duplex} duplex"),
+            if half {
+                Some("half duplex means a bad cable or port; replace the patch cable or try another router port")
+            } else if slow {
+                Some("100 Mbit/s on a gigabit NIC usually means a damaged cable pair; ignore if the router port is 100 Mbit/s")
+            } else {
+                None
+            },
+        ));
     }
     let stats = base.join("statistics");
     let crc = read_u64(&stats.join("rx_crc_errors")).unwrap_or(0);
@@ -135,10 +135,10 @@ fn bus_power(root: &Path, base: &Path, iface: &str) -> Option<Item> {
         "PCIe runtime PM adds wake-up jitter: echo on > /sys/class/net/<if>/device/power/control (and consider pcie_aspm=off)"
     };
     let mut detail = format!("{bus} power/control={v}");
-    if bus == "pci" {
-        if let Some(p) = read_trim(&root.join("sys/module/pcie_aspm/parameters/policy")).as_deref().and_then(aspm_policy) {
-            detail.push_str(&format!(", aspm {p}"));
-        }
+    if bus == "pci"
+        && let Some(p) = read_trim(&root.join("sys/module/pcie_aspm/parameters/policy")).as_deref().and_then(aspm_policy)
+    {
+        detail.push_str(&format!(", aspm {p}"));
     }
     Some(item(if auto { Level::Warn } else { Level::Ok }, format!("bus power {iface}"), detail, auto.then_some(fix)))
 }
@@ -153,29 +153,29 @@ fn aspm_policy(text: &str) -> Option<&str> {
 fn mac_and_mtu(base: &Path, iface: &str, role: IfaceRole) -> Vec<Item> {
     let mut out = Vec::new();
     // 0 = permanent, 1 = random, 2 = stolen, 3 = set by user.
-    if let Some(t) = read_trim(&base.join("addr_assign_type")) {
-        if t == "1" {
-            out.push(item(
-                Level::Warn,
-                format!("mac {iface}"),
-                "random MAC address (addr_assign_type=1)",
-                Some(if role == IfaceRole::Wifi {
-                    "a changing MAC resets DHCP/ARP on the router and splits device counts; set NetworkManager wifi.cloned-mac-address=permanent for this network"
-                } else {
-                    "a changing MAC resets DHCP/ARP on the router; set ethernet.cloned-mac-address=permanent"
-                }),
-            ));
-        }
+    if let Some(t) = read_trim(&base.join("addr_assign_type"))
+        && t == "1"
+    {
+        out.push(item(
+            Level::Warn,
+            format!("mac {iface}"),
+            "random MAC address (addr_assign_type=1)",
+            Some(if role == IfaceRole::Wifi {
+                "a changing MAC resets DHCP/ARP on the router and splits device counts; set NetworkManager wifi.cloned-mac-address=permanent for this network"
+            } else {
+                "a changing MAC resets DHCP/ARP on the router; set ethernet.cloned-mac-address=permanent"
+            }),
+        ));
     }
-    if let Some(mtu) = read_u64(&base.join("mtu")) {
-        if mtu < 1500 {
-            out.push(item(
-                Level::Warn,
-                format!("mtu {iface}"),
-                format!("{mtu} (< 1500)"),
-                Some("small probes pass but large TCP/DNS packets may be dropped; check PPPoE/VPN settings or set MTU 1500"),
-            ));
-        }
+    if let Some(mtu) = read_u64(&base.join("mtu"))
+        && mtu < 1500
+    {
+        out.push(item(
+            Level::Warn,
+            format!("mtu {iface}"),
+            format!("{mtu} (< 1500)"),
+            Some("small probes pass but large TCP/DNS packets may be dropped; check PPPoE/VPN settings or set MTU 1500"),
+        ));
     }
     out
 }

@@ -83,6 +83,12 @@ below it.
 - `wifi scan ... needs CAP_NET_ADMIN` is normal for this manual check. The service has the
   permission.
 
+Optional, before a long run:
+- `... check --deep` adds about 6 s of active self-tests: timer delay, loopback RTT, CPU and
+  disk pressure, and a proof that replies arrive on the interface that sent the probe.
+- `... calibrate --seconds 60` measures the idle noise of every path and writes
+  `/var/lib/linkwatch/calibration.json`. Keep the device and the network idle while it runs.
+
 ## 6. Start the measurement
 
 ```sh

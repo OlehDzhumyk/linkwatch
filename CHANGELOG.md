@@ -10,6 +10,10 @@ All notable changes to `linkwatch` are documented in this file.
 - `linkwatch calibrate [--seconds N]`: idle baseline of every path (gateway RTT p50/p95/p99,
   loss, NIC errors) and timer jitter, written to `<data_dir>/calibration.json`.
 
+### Changed
+- `scripts/ci.sh` runs the CI checks locally or in Docker; clippy is clean with `-D warnings`.
+- Release archives include `docs/INSTALL.md`.
+
 ### Fixed
 - Clock sync with chrony: the daemon is asked for its real state (stratum, offset, max error)
   over its read-only UDP command port, so a running but unsynchronized `chronyd` is reported.
