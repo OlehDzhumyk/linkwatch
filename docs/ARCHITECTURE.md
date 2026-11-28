@@ -115,7 +115,9 @@ Surfaces format and transport. They hold no rules.
   `*_cmd` functions move to `cli/` if `main.rs` grows.
 - `web/`: `api.rs` (1991 lines) splits by tab: `web/api/{live,report,sessions,site,router,
   control}.rs`, plus `web/api/mod.rs` for errors and shared helpers. Handlers call
-  `session::load` and `verdict::headline`.
+  `session::load` and `verdict::headline`. **Done in R7:** also `auth.rs` (token, same-origin,
+  JSON and rate-limit checks) and `index.rs` (the session index that sessions, plan and
+  control share). `mod.rs` keeps the route table.
 - `support_report/`: consumes `SessionResult` and `Headline`. Keeps redaction and rendering.
 
 ### 3.4 Adapters
