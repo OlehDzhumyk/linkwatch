@@ -5,7 +5,7 @@
 //! command port; never spawns subprocesses and never panics.
 
 use crate::link;
-use crate::model::{EventKind, HostSample, IfaceRole};
+use crate::model::{EventKind, HostAlertKind, HostSample, IfaceRole};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
@@ -347,13 +347,13 @@ impl HostMonitor {
 
         if throttled && !self.was_throttled {
             let undervolt = sample.rpi_throttled.is_some_and(|v| v & 0x1 != 0);
-            let alert = if undervolt { "undervoltage" } else { "thermal_throttle" };
+            let alert = if undervolt { HostAlertKind::Undervoltage } else { HostAlertKind::ThermalThrottle };
             let detail = format!(
                 "rpi_throttled={:?}, temp_c={:?}",
                 sample.rpi_throttled.map(|v| format!("0x{v:x}")),
                 sample.temp_c
             );
-            events.push(EventKind::HostAlert { alert: alert.into(), detail });
+            events.push(EventKind::HostAlert { alert, detail, iface: None });
         }
         self.was_throttled = throttled;
 
@@ -361,7 +361,8 @@ impl HostMonitor {
             self.high_cpu_streak += 1;
             if self.high_cpu_streak == 3 {
                 events.push(EventKind::HostAlert {
-                    alert: "high_cpu".into(),
+                    alert: HostAlertKind::HighCpu,
+                    iface: None,
                     detail: format!("CPU usage {:.1}%", sample.cpu_pct.unwrap_or(0.0)),
                 });
             }
@@ -372,7 +373,8 @@ impl HostMonitor {
         let low_mem = sample.mem_used_pct.is_some_and(|m| m >= 95.0);
         if low_mem && !self.was_low_mem {
             events.push(EventKind::HostAlert {
-                alert: "low_memory".into(),
+                alert: HostAlertKind::LowMemory,
+                iface: None,
                 detail: format!(
                     "memory {:.1}% used ({:?} MB free)",
                     sample.mem_used_pct.unwrap_or(0.0),
@@ -388,7 +390,8 @@ impl HostMonitor {
                 && *idx != prev
             {
                 events.push(EventKind::HostAlert {
-                    alert: "driver_reset".into(),
+                    alert: HostAlertKind::DriverReset,
+                    iface: Some(name.clone()),
                     detail: format!("{name}: kernel ifindex changed {prev} -> {idx}"),
                 });
             }
@@ -399,7 +402,8 @@ impl HostMonitor {
             if on {
                 if self.ps_warned.insert(iface.clone()) {
                     events.push(EventKind::HostAlert {
-                        alert: "wifi_power_save".into(),
+                        alert: HostAlertKind::WifiPowerSave,
+                        iface: Some(iface.clone()),
                         detail: format!("{iface}: Wi-Fi power_save is ON (can double RTT and add jitter)"),
                     });
                 }
@@ -490,10 +494,10 @@ mod tests {
 
         let (s1, ev1) = m.evaluate(base.clone(), &[("wlo1".into(), 3)]);
         assert!(s1.throttled);
-        assert!(ev1.iter().any(|e| matches!(e, EventKind::HostAlert { alert, .. } if alert == "undervoltage")));
-        assert!(ev1.iter().any(|e| matches!(e, EventKind::HostAlert { alert, .. } if alert == "low_memory")));
-        assert!(ev1.iter().any(|e| matches!(e, EventKind::HostAlert { alert, .. } if alert == "wifi_power_save")));
-        assert!(!ev1.iter().any(|e| matches!(e, EventKind::HostAlert { alert, .. } if alert == "high_cpu")));
+        assert!(ev1.iter().any(|e| matches!(e, EventKind::HostAlert { alert: HostAlertKind::Undervoltage, .. })));
+        assert!(ev1.iter().any(|e| matches!(e, EventKind::HostAlert { alert: HostAlertKind::LowMemory, .. })));
+        assert!(ev1.iter().any(|e| matches!(e, EventKind::HostAlert { alert: HostAlertKind::WifiPowerSave, .. })));
+        assert!(!ev1.iter().any(|e| matches!(e, EventKind::HostAlert { alert: HostAlertKind::HighCpu, .. })));
 
         // Second high-CPU sample: still below streak 3; undervoltage/low_mem/ps do not repeat.
         let (_, ev2) = m.evaluate(base.clone(), &[("wlo1".into(), 3)]);
@@ -501,7 +505,7 @@ mod tests {
 
         // Third high-CPU sample + ifindex jump => high_cpu and driver_reset fire.
         let (_, ev3) = m.evaluate(base, &[("wlo1".into(), 7)]);
-        assert!(ev3.iter().any(|e| matches!(e, EventKind::HostAlert { alert, .. } if alert == "high_cpu")));
-        assert!(ev3.iter().any(|e| matches!(e, EventKind::HostAlert { alert, .. } if alert == "driver_reset")));
+        assert!(ev3.iter().any(|e| matches!(e, EventKind::HostAlert { alert: HostAlertKind::HighCpu, .. })));
+        assert!(ev3.iter().any(|e| matches!(e, EventKind::HostAlert { alert: HostAlertKind::DriverReset, .. })));
     }
 }

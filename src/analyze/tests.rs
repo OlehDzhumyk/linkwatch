@@ -336,8 +336,9 @@ fn throttling_driver_reset_and_corroborated_outage_attribution() {
     a.push(&env(
         t0 + Duration::seconds(20),
         Record::Event(EventKind::HostAlert {
-            alert: "undervoltage".into(),
+            alert: HostAlertKind::Undervoltage,
             detail: "rpi_throttled=0x1".into(),
+            iface: None,
         }),
     ));
     // Corroborated dual-path WAN outage around i=60..66 while warm/throttled (not undervolt) -> stays Network!
@@ -353,8 +354,9 @@ fn throttling_driver_reset_and_corroborated_outage_attribution() {
     a.push(&env(
         t0 + Duration::seconds(101),
         Record::Event(EventKind::HostAlert {
-            alert: "driver_reset".into(),
+            alert: HostAlertKind::DriverReset,
             detail: "eth0: kernel ifindex changed 2 -> 5".into(),
+            iface: None,
         }),
     ));
     let r = a.finish(&[]);

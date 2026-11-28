@@ -422,7 +422,7 @@ fn a10_e2e_driver_reset_after_start() {
         100..140,
         0..0,
         PathState::LanDown,
-        vec![(120, Record::Event(EventKind::HostAlert { alert: "driver_reset".into(), detail: "wlo1: firmware restarted".into() }))],
+        vec![(120, Record::Event(EventKind::HostAlert { alert: HostAlertKind::DriverReset, detail: "wlo1: firmware restarted".into(), iface: None }))],
     );
     let f = &ep(&r, "wlo1").finding;
     assert_eq!(f.attribution, Attribution::Network, "{f:#?}");

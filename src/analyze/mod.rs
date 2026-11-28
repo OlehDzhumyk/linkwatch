@@ -83,12 +83,6 @@ fn is_no_link(role: IfaceRole, s: PathState) -> bool {
     role != IfaceRole::Wifi && matches!(s, PathState::LinkDown | PathState::NoIp)
 }
 
-fn driver_reset_matches_iface(detail: &str, iface: &str) -> bool {
-    detail
-        .strip_prefix(iface)
-        .is_some_and(|rest| rest.starts_with(':') || rest.starts_with(' '))
-}
-
 /// Markdown table cells must not contain `|` or line breaks.
 fn cell(s: &str) -> String {
     s.replace('|', "\\|").replace(['\n', '\r'], " ")
