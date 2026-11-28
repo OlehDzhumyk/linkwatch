@@ -16,8 +16,14 @@ where the connection breaks: Wi-Fi, router, line, or internet.
 
 ## 2. Get the package
 
-There are no published release files yet. Build the package on the target computer (or on a
-computer with the same CPU type):
+Each release on GitHub has ready files for `amd64` and `arm64` (Raspberry Pi 4/5 with a
+64-bit OS):
+
+1. Open the releases page of the repository and select the newest release.
+2. Download `linkwatch_<version>_<arch>.deb` and `SHA256SUMS.txt`.
+3. Check the file: `sha256sum -c --ignore-missing SHA256SUMS.txt`
+
+To build the package yourself (other CPU types, or local changes):
 
 1. Install Rust: `curl https://sh.rustup.rs -sSf | sh` (accept the defaults).
 2. Get the source code and go into its folder.
@@ -28,7 +34,7 @@ computer with the same CPU type):
 ## 3. Install
 
 ```sh
-sudo dpkg -i target/deb/linkwatch_<version>_<arch>.deb
+sudo dpkg -i linkwatch_<version>_<arch>.deb
 ```
 
 The package:

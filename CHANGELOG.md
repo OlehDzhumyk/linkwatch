@@ -2,6 +2,19 @@
 
 All notable changes to `linkwatch` are documented in this file.
 
+## [0.11.1] - 2026-11-28
+
+### Fixed
+- Episode state: the failure nearest to the user names the episode when it holds at least
+  25 % of the bad ticks (a router reboot: gateway down, then a long WAN reconnect, is a
+  router problem). Before, the most frequent state won, and a tie went by the alphabetical
+  order of state names (`lan_down` vs `wan_down` gave `internet_problem`).
+- The golden test fails when no fixture runs, instead of a silent pass.
+
+### Changed
+- `docs/INSTALL.md`, README: install from the release files (`.deb`, `.tar.gz`, checksums).
+- `scripts/ci.sh`: own cache volume (`TARGET_VOLUME`), not shared with other containers.
+
 ## [0.11.0] - 2026-11-28
 
 ### Added

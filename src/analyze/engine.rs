@@ -54,7 +54,8 @@ pub(super) struct OpenEp {
     last_bad: Option<DateTime<Utc>>,
     ticks: u32,
     overrun_ticks: u32,
-    states: BTreeMap<String, u32>,
+    /// Bad ticks per state, in the order the states first appeared.
+    states: Vec<(PathState, u32)>,
     bands: BTreeMap<String, u32>,
     hour_ticks: [u32; 24],
     /// Bad ticks with that flag (dose for the attribution).
@@ -147,16 +148,7 @@ pub(super) struct EpFlags {
 fn close_episode(a: &mut IfAcc, iface: &str, tick: Duration, tick_s: f64) -> Option<(Episode, EpFlags)> {
     let (Some(st), Some(lb)) = (a.open.start, a.open.last_bad) else { return None };
     let end_base = lb.max(st);
-    // The most frequent bad state; on a tie the failure nearest to the user wins (a dead
-    // gateway also hides the line and the internet), never the alphabetical order of names.
-    let state = a
-        .open
-        .states
-        .iter()
-        .filter_map(|(k, c)| serde_json::from_value::<PathState>(serde_json::Value::String(k.clone())).ok().map(|st| (st, *c)))
-        .max_by_key(|(st, c)| (*c, std::cmp::Reverse(nearness_rank(*st))))
-        .map(|(st, _)| st)
-        .unwrap_or(PathState::Unknown);
+    let state = dominant_state(&a.open.states);
     let bands = std::mem::take(&mut a.open.bands);
     let dom_band = bands.iter().max_by_key(|(_, c)| **c).map(|(k, _)| k.clone());
     let flags = EpFlags {
@@ -484,8 +476,10 @@ impl Analyzer {
                 if let Some(bname) = band {
                     *a.open.bands.entry(bname).or_default() += 1;
                 }
-                let key = s.state.as_str().to_string();
-                *a.open.states.entry(key).or_default() += 1;
+                match a.open.states.iter_mut().find(|(st, _)| *st == s.state) {
+                    Some((_, c)) => *c += 1,
+                    None => a.open.states.push((s.state, 1)),
+                }
             }
         } else if a.open.last_bad.is_some_and(|lb| (ts - lb).num_seconds() > gap)
             && let Some(ep) = close(a, &s.iface) {
@@ -1267,8 +1261,26 @@ fn in_window_times(v: &[DateTime<Utc>], lo: DateTime<Utc>, hi: DateTime<Utc>) ->
     &v[a..b.max(a)]
 }
 
-/// How close to the measuring device a failure is (lower = nearer). Used to break ties between
-/// equally frequent states of one episode.
+/// Share of an episode's bad ticks that a nearer failure needs to name the episode.
+/// Engineering estimate: a router reboot shows the dead gateway first and then a long WAN
+/// reconnect; the gateway part is the cause. A one-tick blip of a nearer state is not.
+const NEAR_STATE_SHARE: f64 = 0.25;
+
+/// The state that names an episode: the failure nearest to the user among the states with at
+/// least [`NEAR_STATE_SHARE`] of the bad ticks (the most frequent state always qualifies).
+/// A dead gateway also hides the line and the internet, so the nearer failure explains the rest.
+fn dominant_state(states: &[(PathState, u32)]) -> PathState {
+    let total: u32 = states.iter().map(|(_, c)| c).sum();
+    let max = states.iter().map(|(_, c)| *c).max().unwrap_or(0);
+    states
+        .iter()
+        .filter(|(_, c)| *c == max || f64::from(*c) >= NEAR_STATE_SHARE * f64::from(total))
+        .min_by_key(|(st, _)| nearness_rank(*st))
+        .map(|(st, _)| *st)
+        .unwrap_or(PathState::Unknown)
+}
+
+/// How close to the measuring device a failure is (lower = nearer).
 fn nearness_rank(s: PathState) -> u8 {
     match s {
         PathState::LinkDown => 0,

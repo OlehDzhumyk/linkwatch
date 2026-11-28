@@ -67,7 +67,7 @@ Step-by-step guide for a first measurement: [**docs/INSTALL.md**](docs/INSTALL.m
 
 ### 1. `.deb` package
 
-Prebuilt `.deb` files may be attached to a release: see [Releases](https://github.com/OlehDzhumyk/linkwatch/releases). To build the package yourself, build the binary (section 2), then:
+Each release has `.deb` and `.tar.gz` files for amd64 and arm64, with `SHA256SUMS.txt`: see [Releases](https://github.com/OlehDzhumyk/linkwatch/releases). To build the package yourself, build the binary (section 2), then:
 
 ```sh
 packaging/build-deb.sh target/release/linkwatch     # -> target/deb/linkwatch_<version>_<arch>.deb

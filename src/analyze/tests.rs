@@ -880,3 +880,38 @@ fn tie_between_states_picks_the_nearest_failure() {
     assert_eq!(r.episodes.len(), 1, "{:#?}", r.episodes);
     assert_eq!(r.episodes[0].state, PathState::LanDown);
 }
+
+#[test]
+fn router_reboot_is_named_by_the_dead_gateway_not_the_long_reconnect() {
+    // 40 ticks gateway down, then 41 ticks WAN down while the router reconnects.
+    let t0 = DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+    let mut a = Analyzer::new(Opts::default());
+    for i in 0..200 {
+        let st = match i {
+            50..90 => PathState::LanDown,
+            90..131 => PathState::WanDown,
+            _ => PathState::Ok,
+        };
+        a.push(&env(t0 + Duration::seconds(i), samp("wlo1", IfaceRole::Wifi, st, 3.0)));
+    }
+    let r = a.finish(&[]);
+    assert_eq!(r.episodes.len(), 1, "{:#?}", r.episodes);
+    assert_eq!(r.episodes[0].state, PathState::LanDown);
+}
+
+#[test]
+fn short_blip_of_a_nearer_state_does_not_rename_a_long_outage() {
+    let t0 = DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+    let mut a = Analyzer::new(Opts::default());
+    for i in 0..200 {
+        let st = match i {
+            50 => PathState::LanDown,
+            51..131 => PathState::WanDown,
+            _ => PathState::Ok,
+        };
+        a.push(&env(t0 + Duration::seconds(i), samp("wlo1", IfaceRole::Wifi, st, 3.0)));
+    }
+    let r = a.finish(&[]);
+    assert_eq!(r.episodes.len(), 1, "{:#?}", r.episodes);
+    assert_eq!(r.episodes[0].state, PathState::WanDown);
+}

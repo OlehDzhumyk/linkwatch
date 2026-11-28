@@ -84,7 +84,8 @@ fn diff(expected: &str, actual: &str) -> String {
 #[test]
 fn golden_sessions_match_expectations() {
     let update = std::env::var("LINKWATCH_UPDATE_GOLDEN").is_ok_and(|v| v == "1");
-    let Ok(rd) = std::fs::read_dir(golden_root()) else { return };
+    // The committed synthetic fixture must always run; a missing folder is a failure, not a skip.
+    let rd = std::fs::read_dir(golden_root()).expect("testdata/golden is missing");
     let mut dirs: Vec<PathBuf> = rd.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.is_dir()).collect();
     dirs.sort();
     let mut failures = Vec::new();
@@ -121,6 +122,7 @@ fn golden_sessions_match_expectations() {
         }
     }
     eprintln!("golden: {checked} session(s) checked");
+    assert!(checked > 0, "no golden fixture with expect.json was checked");
     assert!(
         failures.is_empty(),
         "{}\nIf the change is intended, run with LINKWATCH_UPDATE_GOLDEN=1 and review the diff of expect.json.",
