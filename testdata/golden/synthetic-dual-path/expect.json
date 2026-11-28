@@ -1,0 +1,43 @@
+{
+  "episodes": [
+    {
+      "attribution": "network",
+      "cause": "wifi_problem",
+      "duration_s": 10,
+      "iface": "wlo1",
+      "origin": "network",
+      "start": "2026-01-15T10:01:40Z"
+    },
+    {
+      "attribution": "network",
+      "cause": "line_problem",
+      "duration_s": 20,
+      "iface": "wlo1",
+      "origin": "network",
+      "start": "2026-01-15T10:05:00Z"
+    },
+    {
+      "attribution": "network",
+      "cause": "line_problem",
+      "duration_s": 20,
+      "iface": "eth0",
+      "origin": "network",
+      "start": "2026-01-15T10:05:00Z"
+    },
+    {
+      "attribution": "observer_confirmed",
+      "cause": "wifi_problem",
+      "duration_s": 7,
+      "iface": "wlo1",
+      "origin": "observer",
+      "start": "2026-01-15T10:07:35Z"
+    }
+  ],
+  "episodes_per_iface": {
+    "eth0": 1,
+    "wlo1": 3
+  },
+  "load_incidents": 0,
+  "network_incidents": 2,
+  "observer_incidents": 1
+}

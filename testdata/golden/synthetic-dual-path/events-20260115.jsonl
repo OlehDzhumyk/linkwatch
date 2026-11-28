@@ -1,0 +1,2 @@
+{"v":1,"run":"synthetic-run","seq":1,"ts":"2026-01-15T10:00:00.000Z","mono_ns":0,"type":"event","kind":"start","version":"0.0.0-synthetic","boot_id":"boot-synthetic"}
+{"v":1,"run":"synthetic-run","seq":1203,"ts":"2026-01-15T10:09:59.000Z","mono_ns":599000000000,"type":"event","kind":"stop","reason":"synthetic"}
