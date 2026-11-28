@@ -1,5 +1,6 @@
 //! Configuration (TOML). Every field has a default so an empty file works.
 
+use crate::classify::limits;
 use crate::model::IfaceRole;
 use serde::{Deserialize, Serialize};
 use std::net::{Ipv4Addr, SocketAddr};
@@ -297,18 +298,18 @@ impl Default for Classify {
             window_s: None,
             debounce: None,
             window: None,
-            debounce_ticks: 3,
-            window_ticks: 30,
-            degraded_loss_pct: 2.0,
-            degraded_gw_rtt_ms: 50.0,
-            degraded_net_rtt_ms: 150.0,
+            debounce_ticks: limits::DEFAULT_DEBOUNCE_TICKS,
+            window_ticks: limits::DEFAULT_WINDOW_TICKS,
+            degraded_loss_pct: limits::DEGRADED_LOSS_PCT,
+            degraded_gw_rtt_ms: limits::DEGRADED_GW_RTT_MS,
+            degraded_net_rtt_ms: limits::DEGRADED_NET_RTT_MS,
         }
     }
 }
 
 impl Classify {
-    pub const DEFAULT_DEBOUNCE_S: f64 = 3.0;
-    pub const DEFAULT_WINDOW_S: f64 = 30.0;
+    pub const DEFAULT_DEBOUNCE_S: f64 = limits::DEFAULT_DEBOUNCE_S;
+    pub const DEFAULT_WINDOW_S: f64 = limits::DEFAULT_WINDOW_S;
 
     /// Effective debounce in seconds (see the precedence rule on the fields).
     pub fn debounce_secs(&self, probe_ms: u64) -> f64 {
