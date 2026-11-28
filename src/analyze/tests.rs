@@ -725,3 +725,132 @@ fn late_ticks_lower_observer_trust_in_report() {
     let r = a.finish(&[]);
     assert_eq!(r.observer_trust.level, TrustLevel::Polluted, "{:?}", r.observer_trust);
 }
+
+// ---------- masking phase 2: session-wide blinds (section 10: M4, M6, M9, M10, M13) ----------
+
+fn evening_start() -> DateTime<Utc> {
+    Local.with_ymd_and_hms(2026, 11, 20, 18, 5, 0).earliest().unwrap().with_timezone(&Utc)
+}
+
+fn host_ps(on: bool) -> Record {
+    let mut h = HostSample::default();
+    h.wifi_power_save.insert("wlo1".into(), on);
+    Record::Host(h)
+}
+
+fn blind_codes(r: &Report) -> Vec<&str> {
+    r.session_blinds.iter().map(|b| b.msg.code.as_str()).collect()
+}
+
+fn ps_report(on_samples: i64, total: i64) -> Report {
+    let t0 = DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+    let mut a = Analyzer::new(Opts::default());
+    for i in 0..total {
+        let t = t0 + Duration::seconds(i);
+        a.push(&env(t, samp("wlo1", IfaceRole::Wifi, PathState::Ok, 3.0)));
+        a.push(&env(t, host_ps(i < on_samples)));
+    }
+    a.finish(&[])
+}
+
+#[test]
+fn m4_power_save_share_blinds_latency_only_above_five_percent() {
+    let r = ps_report(10, 100);
+    let b = r.session_blinds.iter().find(|b| b.msg.code == "sb_power_save").expect("blind");
+    assert_eq!(b.element, attribution::Element::Latency);
+    assert_eq!(b.by, attribution::BlindCause::PowerSave);
+    assert!((b.share_pct - 10.0).abs() < 0.01);
+    // Rule 2: 4 % is tolerated.
+    let r = ps_report(4, 100);
+    assert!(!blind_codes(&r).contains(&"sb_power_save"), "{:?}", r.session_blinds);
+}
+
+#[test]
+fn m9_monitor_gaps_are_one_session_blind_with_total_seconds() {
+    let t0 = DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+    let mut a = Analyzer::new(Opts::default());
+    for i in 0..200 {
+        a.push(&env(t0 + Duration::seconds(i), samp("wlo1", IfaceRole::Wifi, PathState::Ok, 3.0)));
+    }
+    a.push(&env(t0 + Duration::seconds(50), Record::Event(EventKind::SuspendGap { secs: 40.0 })));
+    a.push(&env(t0 + Duration::seconds(100), Record::Event(EventKind::Start { version: "x".into(), gap_s: Some(20.0), boot_id: "b".into(), prev_boot_id: None })));
+    // A gap of 5 s or less is not a gap.
+    a.push(&env(t0 + Duration::seconds(150), Record::Event(EventKind::Start { version: "x".into(), gap_s: Some(3.0), boot_id: "b".into(), prev_boot_id: None })));
+    let r = a.finish(&[]);
+    let b = r.session_blinds.iter().find(|b| b.msg.code == "sb_monitor_gap").expect("blind");
+    assert_eq!(b.by, attribution::BlindCause::MonitorGap);
+    assert_eq!(b.msg.args.get("secs").map(String::as_str), Some("60"), "{b:?}");
+    // No gaps: no blind.
+    let r = ps_report(0, 50);
+    assert!(r.session_blinds.is_empty(), "{:?}", r.session_blinds);
+}
+
+#[test]
+fn m10_polluted_observer_caps_confidence_and_adds_one_blind() {
+    let t0 = DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+    let build = |late: bool| {
+        let mut a = Analyzer::new(Opts::default());
+        for i in 0..300 {
+            let t = t0 + Duration::seconds(i);
+            let bad = (100..130).contains(&i);
+            // Both paths fail together: a line problem, the strongest network verdict.
+            let st = if bad { PathState::IspDown } else { PathState::Ok };
+            let mut w = samp("wlo1", IfaceRole::Wifi, st, 3.0);
+            if let Record::Sample(s) = &mut w {
+                s.overrun = late && i % 20 == 0 && !bad;
+            }
+            a.push(&env(t, w));
+            a.push(&env(t, samp("eth0", IfaceRole::Ethernet, st, 1.0)));
+        }
+        a.finish(&[])
+    };
+    let clean = build(false);
+    let polluted = build(true);
+    assert_eq!(polluted.observer_trust.level, TrustLevel::Polluted);
+    assert_eq!(blind_codes(&polluted).iter().filter(|c| **c == "sb_observer_polluted").count(), 1);
+    let c = clean.episodes.iter().map(|e| e.finding.confidence).max().unwrap();
+    assert!(c > attribution::Confidence::Medium, "baseline must be high for the cap to show: {c:?}");
+    assert!(polluted.episodes.iter().all(|e| e.finding.confidence <= attribution::Confidence::Medium));
+    assert!(!blind_codes(&clean).contains(&"sb_observer_polluted"));
+}
+
+fn evening_report(self_share_pct: i64, speed_tests: i64) -> Report {
+    let t0 = evening_start();
+    let mut a = Analyzer::new(Opts::default());
+    for i in 0..1000 {
+        let mut r = samp("wlo1", IfaceRole::Wifi, PathState::Ok, 3.0);
+        if let Record::Sample(s) = &mut r
+            && i % 100 < self_share_pct
+        {
+            s.rx_delta = 5_000_000;
+        }
+        a.push(&env(t0 + Duration::seconds(i), r));
+    }
+    for k in 0..speed_tests {
+        let res = SpeedResult { iface: "wlo1".into(), url: "u".into(), bytes: 1, secs: 1.0, mbps: Some(50.0), mbps_all: None, warmup_excluded_s: None, err: None };
+        a.push(&env(t0 + Duration::seconds(k * 10), Record::Speed(res)));
+    }
+    a.finish(&[])
+}
+
+#[test]
+fn m13_evening_self_traffic_blinds_isp_from_ten_percent() {
+    let r = evening_report(30, 0);
+    let b = r.session_blinds.iter().find(|b| b.msg.code == "sb_self_traffic").expect("blind");
+    assert_eq!((b.element, b.by), (attribution::Element::Isp, attribution::BlindCause::SelfTraffic));
+    assert!(b.share_pct >= 25.0 && b.share_pct <= 35.0, "{}", b.share_pct);
+    // Rule 2: 5 % is tolerated.
+    let r = evening_report(5, 0);
+    assert!(!blind_codes(&r).contains(&"sb_self_traffic"), "{:?}", r.session_blinds);
+}
+
+#[test]
+fn m6_frequent_evening_speed_tests_blind_isp_and_rare_ones_do_not() {
+    // 1000 s of evening, 3 tests: far more often than every 2 h.
+    let r = evening_report(0, 3);
+    let b = r.session_blinds.iter().find(|b| b.msg.code == "sb_own_speed_tests").expect("blind");
+    assert_eq!((b.element, b.by), (attribution::Element::Isp, attribution::BlindCause::OwnSpeedTests));
+    // Rule 2: one test, or none, blinds nothing.
+    assert!(!blind_codes(&evening_report(0, 1)).contains(&"sb_own_speed_tests"));
+    assert!(evening_report(0, 0).session_blinds.is_empty());
+}

@@ -3,4 +3,4 @@
 /**
  * A network element a masking condition can hide from this incident (section 10).
  */
-export type Element = "router" | "line";
+export type Element = "router" | "line" | "latency" | "isp" | "timing" | "network";

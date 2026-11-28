@@ -292,11 +292,30 @@ contradicted — and every named network cause needs one case. That is about 40 
 plus the existing end-to-end tests cover the matrix except "too late" for suspects other than
 the driver reset (they have no start time yet).
 
-## 10. Masking: when a condition blocks a conclusion (phase 1 implemented: M1, M2, M3, M5, M11)
+## 10. Masking: when a condition blocks a conclusion (implemented: M1, M2, M3, M5, M11 per incident; M4, M6, M9, M10, M13 per session; M7 not possible)
 
 Status: rows marked **implemented** are in `attribution.rs` and tested (`m01_…` to `m11_…` in
 `attribution_tests.rs`). The other rows are design only. Phase 1 is per incident; session-wide
-rows (M4, M6, M7, M9, M10, M13, M15) need the session report and come later.
+rows (M4, M6, M7, M9, M10, M13, M15) need the session report. Phase 2 (below) does M4, M6, M9, M10, M13.
+
+Phase 2: `Report.session_blinds: Vec<SessionBlind>` with `SessionBlind { element, by, share_pct, msg }`
+(rule 3: reported once, in the Markdown section "Session-wide limits" and as a list under the KPI
+tiles in the web report). `Element` also has `latency`, `isp`, `timing`, `network`; `BlindCause` also
+has `power_save`, `vpn`, `monitor_gap`, `observer_polluted`, `self_traffic`, `own_speed_tests`.
+Thresholds (rule 2: below them nothing is blinded):
+
+| Row | Threshold |
+|---|---|
+| M4 | power-save on in at least 5 % of the power-save readings (host samples and Wi-Fi records) |
+| M9 | any monitor gap above 5 s or host suspend; `share_pct` = gap share of the session |
+| M10 | Observer Trust `polluted`; every non-observer finding gets confidence at most `medium` (applied in `finish()` after attribution and trust) |
+| M13 | own heavy traffic in at least 10 % of the evening ticks (18-24 local) of the worst interface |
+| M6 | at least 2 own speed tests in the evening and evening time / tests below 2 h; `share_pct` is 0 (no share applies) |
+
+M7 (VPN) is **not implemented**: samples, host samples and events carry no VPN signal (no tunnel
+interface or route is recorded). It needs a new collector field first. Existing patterns and
+findings are not removed by a session blind; the blind states what they cannot prove.
+Note: Observer Trust already counts any Wi-Fi power-save as `polluted`, so M10 also applies then.
 
 Implemented in phase 1: `Finding.blinded: Vec<Blind>` with `Blind { element, by, msg }`;
 `Element` = `router | line`; `BlindCause` = `busy_channel | weak_signal | clock_unsynced`;
@@ -336,15 +355,15 @@ Rules:
 | M1 | Wi-Fi-only drop 20 s, channel 90 % busy, no Ethernet | `inconclusive` for `router`, `line`; `can_judge: wifi` | the busy channel hides everything behind the AP **Implemented.** |
 | M2 | The same, but Ethernet stays fine | `network`, Wi-Fi incident; router and line judged healthy | the cable path unblinds **Implemented.** |
 | M3 | Wi-Fi-only drop, signal −86 dBm, no Ethernet | `inconclusive` for `router`, `line` | as M1 **Implemented.** |
-| M4 | Power-save on all session | `blinded: latency` for the session (stall counts, bufferbloat, RTT medians); outages still judged | power-save adds latency, not long loss |
+| M4 | Power-save on all session | `blinded: latency` for the session (stall counts, bufferbloat, RTT medians); outages still judged | power-save adds latency, not long loss **Implemented** (session level). |
 | M5 | Clock not synchronized, router log imported | `router_log` matches not used as counter-evidence; note | ±120 s matching needs a trusted clock **Implemented** (also: the router log does not raise confidence; note `blinded: line` by `clock_unsynced`). |
-| M6 | Own speed test every 30 min in the evening | `blinded: isp` for the evening congestion pattern | own load is confounded with ISP peak load |
-| M7 | VPN active during the session | `blinded: isp`, `line` for internet-path incidents | probes travel the tunnel |
+| M6 | Own speed test every 30 min in the evening | `blinded: isp` for the evening congestion pattern | own load is confounded with ISP peak load **Implemented** (session level). |
+| M7 | VPN active during the session | `blinded: isp`, `line` for internet-path incidents | probes travel the tunnel **Not implemented:** no VPN signal in the data. |
 | M8 | Router ignores ICMP (rate limit), internet fine | gateway loss does not blame the router | the router is busy answering, not down. Today only the Degraded check in `classify` allows for it; the other gateway-loss paths do not. Being fixed in the classifier (not done yet). |
-| M9 | Monitor gap (service restart, disk full) | no conclusion inside the gap; gap listed | nothing was measured |
-| M10 | Observer Trust `polluted` all night (late ticks) | every network result at most `medium`; no `observer_confirmed` needed per incident | session-wide; reported once |
+| M9 | Monitor gap (service restart, disk full) | no conclusion inside the gap; gap listed | nothing was measured **Implemented** (session level, element `timing`). |
+| M10 | Observer Trust `polluted` all night (late ticks) | every network result at most `medium`; no `observer_confirmed` needed per incident | session-wide; reported once **Implemented** (cap applied in the engine; one session blind). |
 | M11 | 2 % of ticks late (Trust `caution`) | nothing blinded; one note | tolerated (rule 2) **Implemented** (conditions below their threshold, such as 2 of 30 late ticks, blind nothing). |
 | M12 | Mesh / repeater between the observer and the main router | `router` means "the nearest Wi-Fi node"; note | the observer cannot see past the node |
-| M13 | Host downloads heavily all evening | `blinded: isp` for evening RTT / speed patterns | own load |
+| M13 | Host downloads heavily all evening | `blinded: isp` for evening RTT / speed patterns | own load **Implemented** (session level). |
 | M14 | Repeated DFS channel switches all night | Wi-Fi incidents judged; cause `channel_switch`; advice: use a non-DFS channel | not blinding, a cause |
 | M15 | Two observers, one `polluted` | `compare` uses the clean one for shared incidents | the polluted one cannot confirm or deny |

@@ -141,6 +141,14 @@ pub enum Element {
     Router,
     /// The internet line (modem, cable, DSL).
     Line,
+    /// Latency figures: stall counts, bufferbloat, RTT medians (session level).
+    Latency,
+    /// The internet provider as a whole, for example its evening congestion (session level).
+    Isp,
+    /// Anything that depends on the time inside a stretch nobody measured (session level).
+    Timing,
+    /// Every network result of the session (session level).
+    Network,
 }
 
 /// The condition that hides an element.
@@ -154,6 +162,18 @@ pub enum BlindCause {
     WeakSignal,
     /// The session clock was not synchronized, so router log lines cannot be matched.
     ClockUnsynced,
+    /// Wi-Fi power-save was on for a part of the session (session level).
+    PowerSave,
+    /// A VPN was active (session level; reserved, the monitor has no VPN signal).
+    Vpn,
+    /// The monitor did not run for a time (session level).
+    MonitorGap,
+    /// Observer Trust is `polluted` (session level).
+    ObserverPolluted,
+    /// The host's own heavy traffic (session level).
+    SelfTraffic,
+    /// The monitor's own speed tests, often in the evening (session level).
+    OwnSpeedTests,
 }
 
 /// One element this incident cannot judge, and why.

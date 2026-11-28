@@ -355,10 +355,24 @@ pub struct Report {
     pub observer_findings: Vec<String>,
     #[serde(default)]
     pub observer_trust: ObserverTrust,
+    /// Conditions that blind one element for the whole session (section 10), reported once.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub session_blinds: Vec<SessionBlind>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub router: Option<RouterReport>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lan: Option<LanReport>,
+}
+
+/// A condition that hides one element for the whole session (docs/INCIDENT-ATTRIBUTION.md, section 10).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct SessionBlind {
+    pub element: attribution::Element,
+    pub by: attribution::BlindCause,
+    /// How much of the session the condition covers, in percent (0 when a share does not apply).
+    pub share_pct: f64,
+    pub msg: Msg,
 }
 
 /// One router log line (DOCSIS event log), already converted to UTC.

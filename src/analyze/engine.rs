@@ -35,6 +35,14 @@ const SIGNAL_WINDOW_S: i64 = 60;
 const SPEEDTEST_LEAD_S: i64 = 40;
 /// LAN device activity is compared over this window around an episode.
 const LAN_WINDOW_S: i64 = 600;
+/// Wi-Fi power-save on for at least this share of the session blinds latency figures (M4).
+const POWER_SAVE_BLIND_PCT: f64 = 5.0;
+/// The host's own heavy traffic in at least this share of the evening blinds ISP evening patterns (M13).
+const EVENING_SELF_TRAFFIC_BLIND_PCT: f64 = 10.0;
+/// Own speed tests more often than this in the evening blind ISP evening patterns (M6).
+const EVENING_SPEEDTEST_EVERY_S: f64 = 7200.0;
+/// Local hours that count as evening.
+const EVENING_HOURS: std::ops::Range<usize> = 18..24;
 /// Backfill an episode band from a Wi-Fi frequency reading at most this far from its middle.
 const BAND_BACKFILL_S: i64 = 120;
 
@@ -105,6 +113,8 @@ pub(super) struct IfAcc {
     last_stall: Option<DateTime<Utc>>,
     overrun_ticks: u64,
     self_traffic_ticks: u64,
+    /// Own heavy-traffic ticks in the evening hours (18-24 local).
+    evening_self_ticks: u64,
     self_traffic_stalls: u32,
     last_self_traffic: Option<DateTime<Utc>>,
     stall_events: Vec<(DateTime<Utc>, u64)>,
@@ -180,6 +190,9 @@ pub struct Analyzer {
     host_samples: u64,
     host_throttled_at: Vec<DateTime<Utc>>,
     host_power_save_ifaces: BTreeSet<String>,
+    /// Readings of the power-save state, and how many of them said "on".
+    power_save_known: u64,
+    power_save_on: u64,
     host_clock_unsynced: bool,
     host_max_cpu: Option<f64>,
     host_max_temp: Option<f64>,
@@ -227,6 +240,8 @@ impl Analyzer {
             host_samples: 0,
             host_throttled_at: vec![],
             host_power_save_ifaces: BTreeSet::new(),
+            power_save_known: 0,
+            power_save_on: 0,
             host_clock_unsynced: false,
             host_max_cpu: None,
             host_max_temp: None,
@@ -249,6 +264,10 @@ impl Analyzer {
                 self.events.push((e.ts, ev.clone()));
             }
             Record::Wifi(w) => {
+                if let Some(ps) = w.power_save {
+                    self.power_save_known += 1;
+                    self.power_save_on += u64::from(ps);
+                }
                 if w.power_save == Some(true) {
                     self.host_power_save_ifaces.insert(w.iface.clone());
                 }
@@ -319,6 +338,10 @@ impl Analyzer {
                 if let Some(t) = h.temp_c {
                     self.host_max_temp = Some(self.host_max_temp.map_or(t, |m| m.max(t)));
                 }
+                if !h.wifi_power_save.is_empty() {
+                    self.power_save_known += 1;
+                    self.power_save_on += u64::from(h.wifi_power_save.values().any(|&on| on));
+                }
                 for (iface, &on) in &h.wifi_power_save {
                     if on {
                         self.host_power_save_ifaces.insert(iface.clone());
@@ -366,6 +389,7 @@ impl Analyzer {
                 || s.pkt_delta.is_some_and(|p| p as f64 / tick_s.max(0.2) >= self.opts.self_traffic_pps));
         if heavy {
             a.self_traffic_ticks += 1;
+            a.evening_self_ticks += u64::from(EVENING_HOURS.contains(&(local_hour(ts) as usize)));
             a.last_self_traffic = Some(ts);
         }
         let self_traffic = heavy || a.last_self_traffic.is_some_and(|l| (ts - l).num_seconds() <= gap);
@@ -458,6 +482,75 @@ impl Analyzer {
             && let Some(ep) = close(a, &s.iface) {
                 self.episodes.push(ep);
             }
+    }
+
+    /// Session-wide masking conditions (section 10, rule 3): reported once, never per incident.
+    /// Below its share a condition blinds nothing (rule 2). M7 (VPN) has no signal in the data.
+    fn session_blinds(&self, rep: &Report) -> Vec<SessionBlind> {
+        use attribution::{BlindCause as C, Element as E};
+        let mut out = Vec::new();
+        let session_s = rep.hours * 3600.0;
+        // M4: power-save inflates RTT, it does not make long loss.
+        if self.power_save_known > 0 {
+            let share = self.power_save_on as f64 * 100.0 / self.power_save_known as f64;
+            if share >= POWER_SAVE_BLIND_PCT {
+                out.push(SessionBlind {
+                    element: E::Latency,
+                    by: C::PowerSave,
+                    share_pct: share,
+                    msg: crate::msg!("sb_power_save", "Wi-Fi power-save was on for {pct}% of the session: stall counts, bufferbloat and RTT medians are not reliable. Outages are still judged.", pct = format!("{share:.0}")),
+                });
+            }
+        }
+        // M9: nothing was measured inside the gaps.
+        let gap_s: f64 = self
+            .events
+            .iter()
+            .map(|(_, ev)| match ev {
+                EventKind::Start { gap_s: Some(g), .. } if *g > 5.0 => *g,
+                EventKind::SuspendGap { secs } => *secs,
+                _ => 0.0,
+            })
+            .sum();
+        if gap_s > 0.0 {
+            out.push(SessionBlind {
+                element: E::Timing,
+                by: C::MonitorGap,
+                share_pct: if session_s > 0.0 { (gap_s * 100.0 / session_s).min(100.0) } else { 0.0 },
+                msg: crate::msg!("sb_monitor_gap", "The monitor did not measure for {secs} s in total: nothing can be concluded inside these gaps (see monitor gaps).", secs = format!("{gap_s:.0}")),
+            });
+        }
+        // M10: a polluted observer caps every network result at medium.
+        if rep.observer_trust.level == TrustLevel::Polluted {
+            out.push(SessionBlind {
+                element: E::Network,
+                by: C::ObserverPolluted,
+                share_pct: 100.0,
+                msg: crate::msg!("sb_observer_polluted", "Observer Trust is polluted: every network result is limited to medium confidence."),
+            });
+        }
+        // M13 / M6: the evening ISP pattern is confounded with the host's own load.
+        let evening_ticks = |a: &IfAcc| EVENING_HOURS.map(|h| a.hour_ticks[h]).sum::<u64>();
+        let self_share = self.ifs.values().filter(|a| evening_ticks(a) > 0).map(|a| a.evening_self_ticks as f64 * 100.0 / evening_ticks(a) as f64).fold(0.0, f64::max);
+        if self_share >= EVENING_SELF_TRAFFIC_BLIND_PCT {
+            out.push(SessionBlind {
+                element: E::Isp,
+                by: C::SelfTraffic,
+                share_pct: self_share,
+                msg: crate::msg!("sb_self_traffic", "The host's own traffic filled {pct}% of the evening hours (18-24): evening RTT and speed patterns cannot be blamed on the provider.", pct = format!("{self_share:.0}")),
+            });
+        }
+        let evening_s = self.ifs.values().map(evening_ticks).max().unwrap_or(0) as f64 * self.opts.tick_s;
+        let tests = self.speedtests.iter().filter(|(t, _)| EVENING_HOURS.contains(&(local_hour(*t) as usize))).count();
+        if tests >= 2 && evening_s / (tests as f64) < EVENING_SPEEDTEST_EVERY_S {
+            out.push(SessionBlind {
+                element: E::Isp,
+                by: C::OwnSpeedTests,
+                share_pct: 0.0,
+                msg: crate::msg!("sb_own_speed_tests", "The monitor ran {n} speed tests in the evening hours (more often than every 2 h): evening congestion patterns are confounded with its own load.", n = tests),
+            });
+        }
+        out
     }
 
     pub fn finish(mut self, router: &[RouterLine]) -> Report {
@@ -724,7 +817,7 @@ impl Analyzer {
             }
         }
 
-        let ep_with_flags = self.episodes;
+        let ep_with_flags = std::mem::take(&mut self.episodes);
         let mut rep = Report { from: self.from, to: self.to, tick_s, micro_max_s: self.opts.micro_max_s, ..Default::default() };
         rep.hours = match (self.from, self.to) {
             (Some(f), Some(t)) => (t - f).num_seconds() as f64 / 3600.0,
@@ -981,6 +1074,7 @@ impl Analyzer {
             observer_incidents: rep.observer_incidents,
             max_cpu: self.host_max_cpu,
         });
+        rep.session_blinds = self.session_blinds(&rep);
 
         if !self.router_samples.is_empty() {
             self.router_samples.sort_by_key(|(t, _)| *t);
@@ -1062,6 +1156,13 @@ impl Analyzer {
             .collect();
         rep.patterns_msg = patterns(&net_eps, micro);
         rep.patterns = texts(&rep.patterns_msg);
+        let mut episodes = episodes;
+        if rep.observer_trust.level == TrustLevel::Polluted {
+            // M10: a polluted observer cannot back a firm network verdict.
+            for e in episodes.iter_mut().filter(|e| !e.finding.attribution.is_observer()) {
+                e.finding.confidence = e.finding.confidence.min(attribution::Confidence::Medium);
+            }
+        }
         rep.episodes = episodes;
         rep.findings_msg = findings(&rep);
         rep.findings = texts(&rep.findings_msg);

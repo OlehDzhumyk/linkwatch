@@ -359,6 +359,9 @@ canvas.spark { display: block; width: 100%; height: 36px; background: var(--pane
   background: var(--panel-alt); border: 1px solid var(--border); border-radius: var(--r-sm);
   padding: var(--s2) var(--s3); display: grid; gap: 2px; text-align: left; font: inherit; color: var(--fg);
 }
+.blind-box { margin-top: var(--s3); font-size: 13px; color: var(--muted); }
+.blind-box .blind-title { font-weight: 600; color: var(--fg); margin: 0 0 var(--s1); }
+.blind-box ul { margin: 0; padding-left: var(--s4); display: grid; gap: var(--s1); }
 .kpi-link { position: relative; }
 .kpi-link:hover { border-color: var(--accent); }
 .kpi-hit {

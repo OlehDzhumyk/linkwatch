@@ -3,4 +3,4 @@
 /**
  * The condition that hides an element.
  */
-export type BlindCause = "busy_channel" | "weak_signal" | "clock_unsynced";
+export type BlindCause = "busy_channel" | "weak_signal" | "clock_unsynced" | "power_save" | "vpn" | "monitor_gap" | "observer_polluted" | "self_traffic" | "own_speed_tests";

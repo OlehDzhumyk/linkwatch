@@ -1043,6 +1043,7 @@ fn live_report_is_reused_for_five_minutes() {
         patterns: Vec::new(),
         observer_findings: Vec::new(),
         observer_trust: Default::default(),
+        session_blinds: Vec::new(),
         router: None,
         lan: None,
     });
