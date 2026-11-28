@@ -63,6 +63,9 @@ pub(super) async fn heartbeat_loop(ctx: Ctx) -> anyhow::Result<()> {
 
 pub(super) async fn isp_loop(ctx: Ctx) -> anyhow::Result<()> {
     let mut rx = ctx.shutdown.clone();
+    // Wait after a failed discovery: 30 s, doubling up to 10 min. A silent ISP hop (common on
+    // cable lines) then costs a few probes and log lines per hour, not one every 30 s.
+    let mut miss_wait = ISP_RETRY_MIN_S;
     loop {
         // Prefer a wired interface for discovery: it is the more stable path.
         let mut order: Vec<_> = ctx.ifaces.iter().collect();
@@ -94,12 +97,26 @@ pub(super) async fn isp_loop(ctx: Ctx) -> anyhow::Result<()> {
                     }
                 });
             }
-        // Retry soon while unknown, rarely once found.
-        let wait = if ctx.isp().is_some() { ctx.cfg.intervals.isp_rediscover_s.max(60) } else { 30 };
+        // Retry soon while unknown (with backoff), rarely once found.
+        let wait = if ctx.isp().is_some() {
+            miss_wait = ISP_RETRY_MIN_S;
+            ctx.cfg.intervals.isp_rediscover_s.max(60)
+        } else {
+            let w = miss_wait;
+            miss_wait = next_isp_retry(miss_wait);
+            w
+        };
         if sleep_or_stop(&mut rx, Duration::from_secs(wait)).await {
             return Ok(());
         }
     }
+}
+
+const ISP_RETRY_MIN_S: u64 = 30;
+const ISP_RETRY_MAX_S: u64 = 600;
+
+fn next_isp_retry(prev: u64) -> u64 {
+    (prev * 2).clamp(ISP_RETRY_MIN_S, ISP_RETRY_MAX_S)
 }
 
 pub(super) async fn speed_loop(ctx: Ctx) -> anyhow::Result<()> {
@@ -149,5 +166,19 @@ pub(super) async fn speed_loop(ctx: Ctx) -> anyhow::Result<()> {
             }
         }
         last = Some(chrono::Utc::now());
+    }
+}
+
+#[cfg(test)]
+mod isp_retry_tests {
+    #[test]
+    fn isp_retry_backs_off_to_ten_minutes() {
+        let mut w = super::ISP_RETRY_MIN_S;
+        let mut seen = vec![w];
+        for _ in 0..8 {
+            w = super::next_isp_retry(w);
+            seen.push(w);
+        }
+        assert_eq!(seen, [30, 60, 120, 240, 480, 600, 600, 600, 600]);
     }
 }
