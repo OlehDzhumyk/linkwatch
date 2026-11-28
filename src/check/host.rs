@@ -5,7 +5,7 @@
 //! Only reads `/sys` and `/proc` (no root, no subprocesses). Every path is relative to `root`
 //! so tests can run against a fake tree.
 
-use crate::check::{Item, Level, item};
+use super::{Item, Level, item};
 use crate::model::IfaceRole;
 use std::path::{Path, PathBuf};
 

@@ -3,7 +3,7 @@
 //! Rules: an item exists only when it changes a conclusion (`spoils`); it carries its evidence and
 //! threshold; there is one top action; accepted risks are silent.
 
-use crate::check::{Item, Level};
+use super::{Item, Level};
 use crate::config::Config;
 
 /// One rule: stable code, the question it spoils, the threshold, blocking flag.

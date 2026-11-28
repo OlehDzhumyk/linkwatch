@@ -1,9 +1,17 @@
 //! `linkwatch check`: preflight before a multi-night run. Prints one line per check
 //! and an explanation how to fix each problem. Exit code 1 when any check fails.
 
+mod calibrate;
+mod deep;
+mod host;
+pub mod readiness;
+
+pub use calibrate::{calibrate, calibration_items};
+pub use deep::deep;
+
 use crate::config::Config;
 use crate::model::IfaceRole;
-use crate::{host, link, probe, run, wifi};
+use crate::{link, probe, run, wifi};
 use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -165,10 +173,10 @@ pub async fn check(cfg: &Config) -> Vec<Item> {
     }
 
     // Host settings and background programs that can imitate network faults.
-    out.extend(crate::hostcheck::checks(
+    out.extend(host::checks(
         std::path::Path::new("/"),
         &ifaces,
-        &crate::hostcheck::Ctx { wifi_on_24ghz, shared_subnet: same, dns_servers_configured: !cfg.targets.dns_servers.is_empty() },
+        &host::Ctx { wifi_on_24ghz, shared_subnet: same, dns_servers_configured: !cfg.targets.dns_servers.is_empty() },
     ));
 
     // Storage.
@@ -183,8 +191,8 @@ pub async fn check(cfg: &Config) -> Vec<Item> {
 
     // Time sync matters for correlating with router logs and multi-observer compare.
     // For chrony, ask the daemon: a running chronyd that lost its servers is not synchronized (H10).
-    let sync = host::clock_sync_source();
-    let chrony = (sync == Some("chrony")).then(host::chrony_tracking).flatten();
+    let sync = crate::host::clock_sync_source();
+    let chrony = (sync == Some("chrony")).then(crate::host::chrony_tracking).flatten();
     let (lvl, detail, fix) = match (sync, chrony) {
         (Some(_), Some(t)) if !t.synced => (
             Level::Warn,
