@@ -2,6 +2,18 @@
 
 All notable changes to `linkwatch` are documented in this file.
 
+## [Unreleased]
+
+### Added
+- `linkwatch check --deep`: timer jitter, loopback RTT, CPU/IO pressure (PSI) and a per-interface
+  path proof (replies must arrive on the interface that sent the probe).
+- `linkwatch calibrate [--seconds N]`: idle baseline of every path (gateway RTT p50/p95/p99,
+  loss, NIC errors) and timer jitter, written to `<data_dir>/calibration.json`.
+
+### Fixed
+- Clock sync with chrony: the daemon is asked for its real state (stratum, offset, max error)
+  over its read-only UDP command port, so a running but unsynchronized `chronyd` is reported.
+
 ## [0.6.0] - 2026-11-28
 
 ### Added

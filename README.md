@@ -108,7 +108,8 @@ sudo systemctl start linkwatch
 ## CLI Usage
 
 ```sh
-linkwatch check                                        # preflight: permissions, ARP, power_save, clock, gateway ports/UPnP
+linkwatch check [--deep]                               # preflight; --deep adds ~6 s of active self-tests
+linkwatch calibrate --seconds 60                       # idle baseline of every path -> calibration.json
 linkwatch run --point B1/F2/R3                         # start monitoring loop + Web UI
 linkwatch sessions                                     # list recorded sessions
 linkwatch analyze /var/lib/linkwatch/<id> --router-log docsis.txt > report.md

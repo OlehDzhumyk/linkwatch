@@ -74,6 +74,13 @@ enum Cmd {
     },
     /// Print the effective configuration as TOML.
     Config,
+    /// Measure the idle baseline of this device and its paths (gateway RTT, loss, NIC errors,
+    /// timer jitter) and write it to <data_dir>/calibration.json.
+    Calibrate {
+        /// Duration of the baseline in seconds (at least 5).
+        #[arg(long, default_value_t = 60)]
+        seconds: u64,
+    },
     /// List recorded sessions.
     Sessions,
     /// Incident report for a session: outages and their cause, micro-drops, hourly profile,
@@ -166,6 +173,18 @@ fn main() -> ExitCode {
             Cmd::Compare { sessions, tolerance_s, json } => compare_cmd(&cfg, sessions, tolerance_s, json),
             Cmd::SupportReport { sessions, audience, lang, redact, format, router_log, tolerance_s } => {
                 support_report_cmd(&cfg, sessions, audience, lang, redact, format, router_log, tolerance_s)
+            }
+            Cmd::Calibrate { seconds } => {
+                let ifaces = run::resolve_ifaces(&cfg);
+                eprintln!("calibrating for {seconds} s: keep this device and the network idle ...");
+                let c = deepcheck::calibrate(&ifaces, cfg.targets.gateway, seconds).await;
+                let ok = check::print(&deepcheck::calibration_items(&c));
+                let path = cfg.data_dir.join("calibration.json");
+                match serde_json::to_vec_pretty(&c).map_err(anyhow::Error::from).and_then(|j| std::fs::write(&path, j).map_err(anyhow::Error::from)) {
+                    Ok(()) => println!("written: {}", path.display()),
+                    Err(e) => eprintln!("could not write {}: {e:#}", path.display()),
+                }
+                Ok(ok)
             }
             Cmd::Sessions => {
                 for (dir, m) in store::read::sessions(&cfg.data_dir) {
